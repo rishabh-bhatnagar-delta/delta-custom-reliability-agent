@@ -3,6 +3,11 @@ from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 
 
+class SimpleRepr(BaseModel):
+    def __repr__(self):
+        return self.model_dump_json()
+
+
 class StackResource(BaseModel):
     """Represents an individual AWS resource within a CloudFormation stack."""
 
@@ -41,7 +46,7 @@ class CloudFormationStack(BaseModel):
     )
 
 
-class DimensionOutput(BaseModel):
+class DimensionOutput(SimpleRepr):
     name: str = Field(
         ...,
         description="The name of the dimension of the resource."
