@@ -1,5 +1,6 @@
+from typing import List, Optional, Any
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
 
 
 class StackResource(BaseModel):
@@ -37,4 +38,15 @@ class CloudFormationStack(BaseModel):
     resources: List[StackResource] = Field(
         default_factory=list,
         description="A list of physical resources managed by this stack."
+    )
+
+
+class DimensionOutput(BaseModel):
+    dimension_name: str = Field(
+        ...,
+        description="The name of the dimension of the resource."
+    )
+    dimension_value: Any = Field(
+        ...,
+        description="The value of the dimension."
     )
