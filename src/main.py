@@ -1,10 +1,13 @@
 import asyncio
 import json
+
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from core.aws_client import AWSClientProvider
+from src.core.exceptions import MissingToolParam
+from src.models.tool import ToolNames, ToolArgs
 from tools.fetcher import fetch_cft_resources
 
 # 1. Initialize logic components
@@ -19,7 +22,7 @@ async def list_tools() -> list[types.Tool]:
     """Exposes available tools to the LLM."""
     return [
         types.Tool(
-            name="list_aws_resources_from_cft",
+            name=ToolNames.LIST_AWS_RESOURCES,
             description=(
                 "Scans all CloudFormation stacks and returns a list of internal physical "
                 "resources (e.g., API Gateway, RDS, DynamoDB). This is the starting "
@@ -29,6 +32,26 @@ async def list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {},  # No parameters needed for this tool
             },
+        ),
+        types.Tool(
+            name=ToolNames.GET_RESOURCE_DIMENSIONS,
+            description=(
+                "Given a resource's ARN, and the resource type, return "
+                "a list of dimensions based on which the reliability "
+                "posture of a resource can be calculated"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    ToolArgs.RESOURCE_ARN: {
+                        "type": "string",
+                        "description": (
+                            "The resource arn of the resource for which the "
+                            "dimensions has to be fetched"
+                        )
+                    }
+                },
+            },
         )
     ]
 
@@ -37,7 +60,7 @@ async def list_tools() -> list[types.Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     """Handles tool execution requests from the LLM."""
-    if name == "list_aws_resources_from_cft":
+    if name == ToolNames.LIST_AWS_RESOURCES:
         try:
             # Execute the fetcher logic
             results = await fetch_cft_resources(aws)
@@ -53,6 +76,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         except Exception as e:
             # Report the error back to the LLM in a structured format
             return [types.TextContent(type="text", text=f"Error fetching resources: {str(e)}")]
+    elif name == ToolNames.GET_RESOURCE_DIMENSIONS:
+        resource_arn = arguments.get(ToolArgs.RESOURCE_ARN)
+        if not resource_arn:
+            raise MissingToolParam("Missing or empty Resource ARN")
 
     raise ValueError(f"Unknown tool: {name}")
 
