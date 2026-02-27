@@ -19,8 +19,7 @@ class AWSClientProvider:
         """Returns a client for CloudFormation operations."""
         return self._session.client('cloudformation', config=self.config)
 
-    def get_client_by_resource_type(self, resource_type: str):
-        service_name = self.get_service_name_by_resource_type(resource_type)
+    def get_client_by_service_name(self, service_name: str) -> boto3.client:
         return self._session.client(service_name, config=self.config)
 
     @staticmethod

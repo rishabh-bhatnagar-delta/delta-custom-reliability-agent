@@ -42,11 +42,11 @@ class CloudFormationStack(BaseModel):
 
 
 class DimensionOutput(BaseModel):
-    dimension_name: str = Field(
+    name: str = Field(
         ...,
         description="The name of the dimension of the resource."
     )
-    dimension_value: Any = Field(
+    value: Any = Field(
         ...,
         description="The value of the dimension."
     )

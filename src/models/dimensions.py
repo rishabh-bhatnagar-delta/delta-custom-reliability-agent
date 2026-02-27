@@ -2,6 +2,8 @@ import abc
 import enum
 from typing import Optional, List
 
+import boto3
+
 from src.core.aws_client import AWSClientProvider
 from src.models.resources import DimensionOutput
 
@@ -28,5 +30,12 @@ class DimensionFetcher(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_aws_service_name(self):
+    def get_resource_enum(self) -> DimensionSupportedResource:
         raise NotImplementedError
+
+    def get_aws_client_for_resource(self) -> boto3.client:
+        service_name = self.get_resource_enum().value
+        return self.aws.get_client_by_service_name(service_name)
+
+    def get_aws_client_provider(self) -> AWSClientProvider:
+        return self.aws
