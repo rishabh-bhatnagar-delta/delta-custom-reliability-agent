@@ -11,6 +11,7 @@ from src.models.resources import DimensionOutput
 class DimensionSupportedResource(str, enum.Enum):
     DynamoDB = 'dynamodb'
     S3 = 's3'
+    RDS = 'rds'
 
     @classmethod
     def from_str(cls, dimension_str) -> Optional['DimensionSupportedResource']:
@@ -18,6 +19,8 @@ class DimensionSupportedResource(str, enum.Enum):
             return cls.S3
         elif dimension_str == cls.DynamoDB.value:
             return cls.DynamoDB
+        elif dimension_str == cls.RDS.value:
+            return cls.RDS
         return None
 
 
