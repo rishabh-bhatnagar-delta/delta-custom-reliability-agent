@@ -7,6 +7,7 @@ from src.models.resources import DimensionOutput
 from src.tools.auditor.dimension_fetcher.dynamo_db import DynamoDBDimensionFetcher
 from src.tools.auditor.dimension_fetcher.lambda_ import LambdaDimensionFetcher
 from src.tools.auditor.dimension_fetcher.rds import RDSDimensionFetcher
+from src.tools.auditor.dimension_fetcher.s3 import S3DimensionFetcher
 
 
 def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientProvider) -> DimensionFetcher:
