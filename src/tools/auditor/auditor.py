@@ -31,9 +31,9 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
     return dimension_fetcher
 
 
-async def get_resource_dimensions(aws: AWSClientProvider, resource_arn, resource_type) -> List[DimensionOutput]:
+async def get_resource_dimensions(aws: AWSClientProvider, physical_id, resource_type) -> List[DimensionOutput]:
     dimension_fetcher = get_dimension_fetcher_from_resource_type(resource_type, aws)
-    dimensions = dimension_fetcher.get_dimensions(resource_arn)
+    dimensions = dimension_fetcher.get_dimensions(physical_id)
     return dimensions
 
 
@@ -43,11 +43,8 @@ if __name__ == "__main__":
         provider = AWSClientProvider()
 
         # Execute the full orchestration
-        results = await get_resource_dimensions(
-            provider,
-            "test-rishabh-s3-cft-delta-bucket-427942813953",
-            "AWS::S3::Bucket"
-        )
+        results = await get_resource_dimensions(provider, "test-rishabh-s3-cft-delta-bucket-427942813953",
+                                                "AWS::S3::Bucket")
         print(results)
 
 

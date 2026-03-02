@@ -32,7 +32,7 @@ class DimensionFetcher(abc.ABC):
         self.aws = aws
 
     @abc.abstractmethod
-    def get_dimensions(self, resource_arn) -> List[DimensionOutput]:
+    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
         raise NotImplementedError
 
     @abc.abstractmethod
