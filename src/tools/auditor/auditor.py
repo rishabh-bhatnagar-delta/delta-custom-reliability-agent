@@ -5,6 +5,7 @@ from src.core.aws_client import AWSClientProvider
 from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
 from src.tools.auditor.dimension_fetcher.dynamo_db import DynamoDBDimensionFetcher
+from src.tools.auditor.dimension_fetcher.lambda_ import LambdaDimensionFetcher
 from src.tools.auditor.dimension_fetcher.rds import RDSDimensionFetcher
 
 
@@ -23,6 +24,8 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
     dimension_fetcher = {
         DimensionSupportedResource.DynamoDB: DynamoDBDimensionFetcher(aws),
         DimensionSupportedResource.RDS: RDSDimensionFetcher(aws),
+        DimensionSupportedResource.Lambda: LambdaDimensionFetcher(aws),
+        DimensionSupportedResource.S3: S3DimensionFetcher(aws),
     }[res_enum]
     return dimension_fetcher
 
@@ -39,8 +42,11 @@ if __name__ == "__main__":
         provider = AWSClientProvider()
 
         # Execute the full orchestration
-        results = await get_resource_dimensions(provider, "rds-rishabh-delta-template-dbinstance-3m25nlwd1tat",
-                                                "AWS::RDS::DBInstance")
+        results = await get_resource_dimensions(
+            provider,
+            "test-rishabh-s3-cft-delta-bucket-427942813953",
+            "AWS::S3::Bucket"
+        )
         print(results)
 
 

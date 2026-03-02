@@ -12,6 +12,7 @@ class DimensionSupportedResource(str, enum.Enum):
     DynamoDB = 'dynamodb'
     S3 = 's3'
     RDS = 'rds'
+    Lambda = 'lambda'
 
     @classmethod
     def from_str(cls, dimension_str) -> Optional['DimensionSupportedResource']:
@@ -21,6 +22,8 @@ class DimensionSupportedResource(str, enum.Enum):
             return cls.DynamoDB
         elif dimension_str == cls.RDS.value:
             return cls.RDS
+        elif dimension_str == cls.Lambda.value:
+            return cls.Lambda
         return None
 
 
