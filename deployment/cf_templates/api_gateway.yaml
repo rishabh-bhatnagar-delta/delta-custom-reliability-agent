@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: basic-aws-apigateway-demo
+
+Resources:
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.9
+      Handler: app.lambda_handler
+      InlineCode: |
+        import json
+        
+        def lambda_handler(event, context):
+            return {
+                'statusCode': 200,
+                'body': json.dumps('Hello from Lambda! Path: ' + event.get('path', ''))
+            }
+      Events:
+        HelloWorldApi:
+          Type: Api
+          Properties:
+            Path: /hello
+            Method: GET
+
+Outputs:
+  HelloWorldApi:
+    Description: 'API Gateway endpoint URL'
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/'
