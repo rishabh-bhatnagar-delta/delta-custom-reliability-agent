@@ -1,0 +1,13 @@
+MyDB:
+  Type: AWS::RDS::DBInstance
+  Properties:
+    AllocatedStorage: '20'
+    DBInstanceClass: db.t3.micro
+    Engine: mysql
+    EngineVersion: '8.0'
+    MasterUsername: admin
+    MasterUserPassword: 'SecurePass123!'
+    DBName: mydb
+    BackupRetentionPeriod: 7
+    PubliclyAccessible: true
+    DeletionPolicy: Snapshot

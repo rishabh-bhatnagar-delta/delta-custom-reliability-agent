@@ -8,7 +8,7 @@ from mcp.server.stdio import stdio_server
 from core.aws_client import AWSClientProvider
 from src.core.exceptions import MissingToolParam
 from src.models.tool import ToolNames, ToolArgs
-from src.tools.auditor import get_resource_dimensions
+from src.tools.auditor.auditor import get_resource_dimensions
 from tools.fetcher import fetch_cft_resources
 
 # 1. Initialize logic components
@@ -86,6 +86,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             raise MissingToolParam("Missing or empty resource_type parameter")
 
         results = await get_resource_dimensions(aws, resource_arn, resource_type)
+        content = json.dumps(
+            [r.model_dump() for r in results],
+            indent=2
+        )
+        return [types.TextContent(type="text", text=content)]
 
     raise ValueError(f"Unknown tool: {name}")
 

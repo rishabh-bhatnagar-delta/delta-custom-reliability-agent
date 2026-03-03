@@ -11,6 +11,9 @@ from src.models.resources import DimensionOutput
 class DimensionSupportedResource(str, enum.Enum):
     DynamoDB = 'dynamodb'
     S3 = 's3'
+    RDS = 'rds'
+    Lambda = 'lambda'
+    APIGateway = 'apigateway'
 
     @classmethod
     def from_str(cls, dimension_str) -> Optional['DimensionSupportedResource']:
@@ -18,6 +21,12 @@ class DimensionSupportedResource(str, enum.Enum):
             return cls.S3
         elif dimension_str == cls.DynamoDB.value:
             return cls.DynamoDB
+        elif dimension_str == cls.RDS.value:
+            return cls.RDS
+        elif dimension_str == cls.Lambda.value:
+            return cls.Lambda
+        elif dimension_str == cls.APIGateway.value:
+            return cls.APIGateway
         return None
 
 
@@ -26,7 +35,7 @@ class DimensionFetcher(abc.ABC):
         self.aws = aws
 
     @abc.abstractmethod
-    def get_dimensions(self, resource_arn) -> List[DimensionOutput]:
+    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
         raise NotImplementedError
 
     @abc.abstractmethod
