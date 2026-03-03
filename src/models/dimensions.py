@@ -13,6 +13,7 @@ class DimensionSupportedResource(str, enum.Enum):
     S3 = 's3'
     RDS = 'rds'
     Lambda = 'lambda'
+    APIGateway = 'apigateway'
 
     @classmethod
     def from_str(cls, dimension_str) -> Optional['DimensionSupportedResource']:
@@ -24,6 +25,8 @@ class DimensionSupportedResource(str, enum.Enum):
             return cls.RDS
         elif dimension_str == cls.Lambda.value:
             return cls.Lambda
+        elif dimension_str == cls.APIGateway.value:
+            return cls.APIGateway
         return None
 
 

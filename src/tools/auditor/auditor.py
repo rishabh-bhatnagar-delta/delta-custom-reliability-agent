@@ -4,6 +4,7 @@ from typing import List
 from src.core.aws_client import AWSClientProvider
 from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
+from src.tools.auditor.dimension_fetcher.api_gateway import APIGatewayDimensionFetcher
 from src.tools.auditor.dimension_fetcher.dynamo_db import DynamoDBDimensionFetcher
 from src.tools.auditor.dimension_fetcher.lambda_ import LambdaDimensionFetcher
 from src.tools.auditor.dimension_fetcher.rds import RDSDimensionFetcher
@@ -27,6 +28,7 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
         DimensionSupportedResource.RDS: RDSDimensionFetcher(aws),
         DimensionSupportedResource.Lambda: LambdaDimensionFetcher(aws),
         DimensionSupportedResource.S3: S3DimensionFetcher(aws),
+        DimensionSupportedResource.APIGateway: APIGatewayDimensionFetcher(aws),
     }[res_enum]
     return dimension_fetcher
 
@@ -43,8 +45,11 @@ if __name__ == "__main__":
         provider = AWSClientProvider()
 
         # Execute the full orchestration
-        results = await get_resource_dimensions(provider, "test-rishabh-s3-cft-delta-bucket-427942813953",
-                                                "AWS::S3::Bucket")
+        results = await get_resource_dimensions(
+            provider,
+            physical_id="bk6to3xnh0",
+            resource_type="AWS::ApiGateway::RestApi"
+        )
         print(results)
 
 
