@@ -10,7 +10,7 @@ class ResilienceGap(BaseModel):
 
 
 class ResiliencyReport(BaseModel):
-    bucket_name: str
+    resource_name: str
     resilience_gaps: List[ResilienceGap]
     overall_resilience_score: int
     max_resilience_score: int = 10

@@ -64,7 +64,7 @@ def main():
 
     # Render Output
     r = output.report
-    print(f"\nS3 AUDIT: {r.bucket_name} | Score: {r.overall_resilience_score}/10")
+    print(f"\nS3 AUDIT: {r.resource_name} | Score: {r.overall_resilience_score}/10")
     print("-" * 60)
     print(f"SUMMARY: {r.summary}\n")
 
