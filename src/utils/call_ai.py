@@ -2,26 +2,33 @@ import os
 
 import boto3
 
+from src.models.ai import Tool
 
-def ask_ai(message, session_id="unique-session-id"):
-    agent_id = os.getenv('BEDROCK_AGENT_ID')
-    agent_alias_id = os.getenv('BEDROCK_AGENT_ALIAS_ID')
-    bedrock_agent = boto3.client('bedrock-agent-runtime')
 
-    try:
-        response = bedrock_agent.invoke_agent(
-            inputText=message,
-            agentId=agent_id,
-            agentAliasId=agent_alias_id,
-            sessionId=session_id,
-            enableTrace=False
+def ask_ai(messages, tool: Tool):
+    max_tokens = int(os.getenv('BEDROCK_MODEL_MAX_TOKENS'))
+    model_id = os.getenv('BEDROCK_MODEL_ID')
+
+    bedrock_agent = boto3.client('bedrock-runtime')
+
+    tool_list = [
+        dict(
+            toolSpec=dict(
+                name=tool.name,
+                description=tool.description,
+                inputSchema={"json": tool.expected_output_class.model_json_schema()}
+            )
         )
+    ]
+    response = bedrock_agent.converse(
+        modelId=model_id,
+        messages=messages,
+        inferenceConfig=dict(maxTokens=max_tokens, temperature=0),
+        toolConfig=dict(tools=tool_list),
+    )
 
-        full_response = ""
-        for event in response['completion']:
-            if 'chunk' in event:
-                full_response += event['chunk']['bytes'].decode('utf-8')
-        return full_response
-
-    except Exception as e:
-        return f"Error: {str(e)}"
+    for event in response['output']['message']['content']:
+        if 'toolUse' in event:
+            output = event['toolUse']['input']
+            return tool.expected_output_class(**output)
+    return None
