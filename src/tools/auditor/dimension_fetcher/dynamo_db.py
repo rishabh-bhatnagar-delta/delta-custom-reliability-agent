@@ -1,60 +1,90 @@
-from typing import List
+import json
+from typing import List, Dict, Any
 
-from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
-from src.models.resources import DimensionOutput
+from dotenv import load_dotenv
+
+from src.models.ai import Tool
+from src.models.resiliency_report import ResourceResilienceOutput
+from src.utils.call_ai import ask_ai
+
+load_dotenv(verbose=True)
 
 
-class DynamoDBDimensionFetcher(DimensionFetcher):
-    def get_resource_enum(self) -> DimensionSupportedResource:
-        return DimensionSupportedResource.DynamoDB
+def get_dynamodb_resilience_report(dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
+    """
+    Evaluates DynamoDB configuration against Well-Architected Reliability standards.
+    """
 
-    def get_dimensions(self, physical_id: str) -> List[DimensionOutput]:
-        """
-        Fetches complex DynamoDB configurations. Values are returned in their
-        native types (bool, list, dict) for dynamic HTTP/JSON serialization.
-        """
-        ddb = self.get_aws_client_for_resource()
-        dimensions = []
+    resource_id = next((d['value'] for d in dimensions if d['name'] in ['TableName', 'Name']), "AWS DynamoDB Table")
 
-        try:
-            # 1. Main Table Metadata
-            table_resp = ddb.describe_table(TableName=physical_id)
-            table = table_resp['Table']
+    user_prompt = f"""
+    Perform a Resilience Audit on the following DynamoDB Table: "{resource_id}".
 
-            # Deletion Protection (Boolean)
-            dimensions.append(
-                DimensionOutput(name="DeletionProtection", value=table.get('DeletionProtectionEnabled', False)))
+    Metadata:
+    {json.dumps(dimensions, indent=2)}
 
-            # Global Tables / Replicas (List of Strings)
-            replicas = [r['RegionName'] for r in table.get('Replicas', [])]
-            dimensions.append(DimensionOutput(name="GlobalTableRegions", value=replicas))
+    Task:
+    1. Apply AWS Well-Architected Reliability Pillar standards for NoSQL databases.
+    2. Analyze specific strengths and risks:
+       - Status of 'PointInTimeRecovery' and 'DeletionProtection'.
+       - Multi-region availability via 'GlobalTableRegions'.
+       - Throughput scalability via 'AutoScaling' configurations.
+       - Data change capture via 'StreamsConfiguration'.
+    3. Infer architectural impact regarding regional outages, accidental deletions, or traffic spikes.
+    4. Generate exact AWS CLI commands to remediate any missing best practices for this table.
 
-            # Streams Configuration (Dictionary/Object)
-            dimensions.append(DimensionOutput(
-                name="StreamsConfiguration",
-                value=table.get('StreamSpecification', {"Enabled": False})
-            ))
+    Populate the ResourceResilienceOutput strictly.
+    """
 
-            # Partition & Sort Key Design (List of Objects)
-            dimensions.append(DimensionOutput(name="KeySchema", value=table.get('KeySchema', [])))
+    return ask_ai(
+        messages=[{
+            "role": "user",
+            "content": [{"text": user_prompt}]
+        }],
+        tool=Tool(
+            name='get_resiliency_report',
+            description='Audits DynamoDB for data durability, regional availability, and scalability.',
+            expected_output_class=ResourceResilienceOutput
+        )
+    )
 
-            # Secondary Indexes (List of Objects)
-            dimensions.append(DimensionOutput(name="SecondaryIndexes", value=table.get('GlobalSecondaryIndexes', [])))
 
-            # 2. Point In Time Recovery (PITR)
-            pitr_resp = ddb.describe_continuous_backups(TableName=physical_id)
-            pitr_status = pitr_resp['ContinuousBackupsDescription']['PointInTimeRecoveryDescription']
-            dimensions.append(DimensionOutput(name="PointInTimeRecovery", value=pitr_status))
+def main():
+    sample_dimensions = [
+        {"name": "TableName", "value": "GlobalOrders"},
+        {"name": "DeletionProtection", "value": True},
+        {"name": "GlobalTableRegions", "value": ["us-east-1", "eu-west-1"]},
+        {"name": "StreamsConfiguration", "value": {"StreamEnabled": True, "StreamViewType": "NEW_AND_OLD_IMAGES"}},
+        {"name": "KeySchema", "value": [{"AttributeName": "pk", "KeyType": "HASH"}]},
+        {"name": "SecondaryIndexes", "value": [{"IndexName": "GSI1", "IndexStatus": "ACTIVE"}]},
+        {"name": "PointInTimeRecovery", "value": {"PointInTimeRecoveryStatus": "ENABLED"}},
+        {"name": "AutoScaling", "value": [{"MinCapacity": 5, "MaxCapacity": 50}]}
+    ]
 
-            # 3. Auto Scaling Configuration
-            as_client = self.get_aws_client_provider().get_client_by_service_name("application-autoscaling")
-            scaling_resp = as_client.describe_scalable_targets(
-                ServiceNamespace='dynamodb',
-                ResourceIds=[f"table/{physical_id}"]
-            )
-            dimensions.append(DimensionOutput(name="AutoScaling", value=scaling_resp.get('ScalableTargets', [])))
+    output: ResourceResilienceOutput = get_dynamodb_resilience_report(sample_dimensions)
 
-        except Exception as e:
-            dimensions.append(DimensionOutput(name="Error", value={"message": str(e), "type": type(e).__name__}))
+    if not output or not output.report:
+        print("Audit failed to generate a valid report.")
+        return
 
-        return dimensions
+    report = output.report
+
+    print(f"\nDYNAMODB AUDIT: {report.resource_name}")
+    print(f"POSTURE SCORE: {report.overall_resilience_score}/10")
+    print("-" * 60)
+    print(f"SUMMARY: {report.summary}\n")
+
+    print("GAPS & POSTURE FINDINGS:")
+    for gap in report.resilience_gaps:
+        print(f"• {gap.name} ({gap.status}): {gap.impact}")
+
+    print("\nREMEDIATION COMMANDS:")
+    if not output.aws_commands_to_fix:
+        print("No critical gaps identified requiring CLI remediation.")
+    else:
+        for cmd in output.aws_commands_to_fix:
+            print(f"$ {cmd}")
+
+
+if __name__ == '__main__':
+    main()
