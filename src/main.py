@@ -16,7 +16,6 @@ from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 
-# 'lambda' is a Python keyword, so we use importlib
 _lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
 get_lambda_resilience_report = _lambda_module.get_lambda_resilience_report
 
@@ -28,7 +27,6 @@ aws = AWSClientProvider()
 
 # --- Tool Definitions ---
 
-@app.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -62,10 +60,11 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="analyze_api_gateway_resilience",
+            name="analyze_resilience",
             description=(
-                "Evaluates an API Gateway's configuration against AWS Well-Architected "
-                "Reliability standards. Requires the resource dimensions as input."
+                "Evaluates a resource's configuration against AWS Well-Architected "
+                "Reliability standards. Supports API Gateway, Lambda, RDS, and S3. "
+                "Requires the resource dimensions from get_resource_dimensions as input."
             ),
             inputSchema={
                 "type": "object",
@@ -79,97 +78,14 @@ async def list_tools() -> list[types.Tool]:
                                 "value": {},
                             },
                         },
-                        "description": "List of dimension name/value pairs from get_resource_dimensions.",
+                        "description": "List of dimension name/value pairs from get_resource_dimensions. Must include ResourceName and ResourceType.",
                     },
                 },
                 "required": ["dimensions"],
             },
         ),
-        types.Tool(
-            name="analyze_lambda_resilience",
-            description=(
-                "Evaluates a Lambda function's configuration against AWS Well-Architected "
-                "Serverless Reliability standards. Requires function name and dimensions."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "function_name": {
-                        "type": "string",
-                        "description": "The Lambda function name.",
-                    },
-                    "dimensions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "value": {},
-                            },
-                        },
-                        "description": "List of dimension name/value pairs from get_resource_dimensions.",
-                    },
-                },
-                "required": ["function_name", "dimensions"],
-            },
-        ),
-        types.Tool(
-            name="analyze_rds_resilience",
-            description=(
-                "Evaluates an RDS instance's configuration against AWS Well-Architected "
-                "Reliability standards. Requires DB instance ID and dimensions."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "db_instance_id": {
-                        "type": "string",
-                        "description": "The RDS DB instance identifier.",
-                    },
-                    "dimensions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "value": {},
-                            },
-                        },
-                        "description": "List of dimension name/value pairs from get_resource_dimensions.",
-                    },
-                },
-                "required": ["db_instance_id", "dimensions"],
-            },
-        ),
-        types.Tool(
-            name="analyze_s3_resilience",
-            description=(
-                "Evaluates an S3 bucket's configuration against AWS Well-Architected "
-                "Reliability standards. Requires bucket name and dimensions."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "bucket_name": {
-                        "type": "string",
-                        "description": "The S3 bucket name.",
-                    },
-                    "dimensions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "value": {},
-                            },
-                        },
-                        "description": "List of dimension name/value pairs from get_resource_dimensions.",
-                    },
-                },
-                "required": ["bucket_name", "dimensions"],
-            },
-        ),
     ]
+
 
 
 # --- Tool Routing ---
@@ -216,41 +132,31 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             results = await get_resource_dimensions(aws, resource_id, resource_type)
             return _text(_serialize(results))
 
-        elif name == "analyze_api_gateway_resilience":
+        elif name == "analyze_resilience":
             dimensions = arguments.get("dimensions")
             if not dimensions:
                 raise MissingToolParam("Missing dimensions")
-            result = get_apigw_resilience_report(dimensions)
-            return _text(_serialize(result))
 
-        elif name == "analyze_lambda_resilience":
-            function_name = arguments.get("function_name")
-            dimensions = arguments.get("dimensions")
-            if not function_name:
-                raise MissingToolParam("Missing function_name")
-            if not dimensions:
-                raise MissingToolParam("Missing dimensions")
-            result = get_lambda_resilience_report(function_name, dimensions)
-            return _text(_serialize(result))
+            # Extract resource metadata from dimensions
+            dim_map = {d["name"]: d["value"] for d in dimensions}
+            resource_name = dim_map.get("ResourceName")
+            resource_type = dim_map.get("ResourceType", "")
 
-        elif name == "analyze_rds_resilience":
-            db_instance_id = arguments.get("db_instance_id")
-            dimensions = arguments.get("dimensions")
-            if not db_instance_id:
-                raise MissingToolParam("Missing db_instance_id")
-            if not dimensions:
-                raise MissingToolParam("Missing dimensions")
-            result = get_rds_resilience_report(db_instance_id, dimensions)
-            return _text(_serialize(result))
+            if not resource_name:
+                raise MissingToolParam("Dimensions must include ResourceName")
 
-        elif name == "analyze_s3_resilience":
-            bucket_name = arguments.get("bucket_name")
-            dimensions = arguments.get("dimensions")
-            if not bucket_name:
-                raise MissingToolParam("Missing bucket_name")
-            if not dimensions:
-                raise MissingToolParam("Missing dimensions")
-            result = get_s3_resilience_report(bucket_name, dimensions)
+            # Route to the correct analyzer based on resource type
+            if "ApiGateway" in resource_type or "RestApi" in resource_type:
+                result = get_apigw_resilience_report(dimensions)
+            elif "Lambda" in resource_type or "Function" in resource_type:
+                result = get_lambda_resilience_report(resource_name, dimensions)
+            elif "RDS" in resource_type or "DBInstance" in resource_type:
+                result = get_rds_resilience_report(resource_name, dimensions)
+            elif "S3" in resource_type or "Bucket" in resource_type:
+                result = get_s3_resilience_report(resource_name, dimensions)
+            else:
+                raise ValueError(f"Unsupported resource type for resilience analysis: {resource_type}")
+
             return _text(_serialize(result))
 
         else:
