@@ -29,6 +29,13 @@ class StackResource(BaseModel):
     )
 
 
+class StackSummary(BaseModel):
+    """Basic metadata for a CloudFormation stack."""
+
+    stack_name: str = Field(..., description="The name of the CloudFormation stack.")
+    stack_id: str = Field(..., description="The unique ARN of the stack.")
+
+
 class CloudFormationStack(BaseModel):
     """Represents a full CloudFormation stack and its contained resources."""
 
