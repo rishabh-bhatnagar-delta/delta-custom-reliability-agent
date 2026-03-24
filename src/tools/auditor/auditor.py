@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import List
 
 from src.core.aws_client import AWSClientProvider
@@ -44,13 +45,20 @@ if __name__ == "__main__":
         print("--- Fetching the dimensions ---")
         provider = AWSClientProvider()
 
+        physical_id = "observability-job-status-516669083107-us-east-1-dev"
+        resource_type = "AWS::S3::Bucket"
+
+        print(f"Physical ID: {physical_id}")
+        print(f"Resource Type: {resource_type}\n")
+
         # Execute the full orchestration
         results = await get_resource_dimensions(
             provider,
-            physical_id="bk6to3xnh0",
-            resource_type="AWS::ApiGateway::RestApi"
+            physical_id=physical_id,
+            resource_type=resource_type
         )
-        print(results)
+        output = [d.model_dump() for d in results]
+        print(json.dumps(output, indent=2))
 
 
     asyncio.run(run_local())
