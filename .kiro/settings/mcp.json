@@ -1,14 +1,11 @@
 {
   "mcpServers": {
     "aws-reliability-auditor": {
-      "command": "python",
-      "args": [
-        "D:/Users/p40996/projects/delta-custom-reliability-agent/run_server.py"
-      ],
-      "env": {},
+      "url": "http://localhost:8000/mcp",
       "disabled": false,
       "autoApprove": [
-        "list_aws_resources"
+        "list_aws_resources",
+        "get_stack_resources"
       ]
     }
   }

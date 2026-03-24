@@ -5,7 +5,7 @@ import logging
 
 import mcp.types as types
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from src.core.aws_client import AWSClientProvider
 from src.core.exceptions import MissingToolParam
@@ -27,6 +27,7 @@ aws = AWSClientProvider()
 
 # --- Tool Definitions ---
 
+@app.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -195,17 +196,32 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 # --- Entry Point ---
 
-async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+def main(host: str = "0.0.0.0", port: int = 8000):
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    from contextlib import asynccontextmanager
+
+    session_manager = StreamableHTTPSessionManager(
+        app=app,
+        stateless=True,
+        json_response=True,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with session_manager.run():
+            yield
+
+    starlette_app = Starlette(
+        lifespan=lifespan,
+        routes=[
+            Mount("/mcp", app=session_manager.handle_request),
+        ]
+    )
+
+    uvicorn.run(starlette_app, host=host, port=port)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    main()
