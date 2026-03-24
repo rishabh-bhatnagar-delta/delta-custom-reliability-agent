@@ -20,49 +20,27 @@ def get_s3_resilience_report(bucket_name: str, dimensions: List[Dict[str, Any]])
     1. 'recommendations': List of strings.
     2. 'aws_commands_to_fix': List of strings (AWS CLI).
     3. 'report': Object with bucket_name, resilience_gaps, overall_resilience_score, and summary.
-
-    START WITH THE TOOL CALL. NO PREAMBLE.
     """
-
-    try:
-        output: ResourceResilienceOutput = ask_ai(
-            messages=[{
-                "role": "user",
-                "content": [{"text": user_prompt}]
-            }],
-            tool=Tool(
-                name='get_s3_resilience_report',
-                description='Generates a complete S3 resiliency report.',
-                expected_output_class=ResourceResilienceOutput
-            )
+    output: ResourceResilienceOutput = ask_ai(
+        messages=[{
+            "role": "user",
+            "content": [{"text": user_prompt}]
+        }],
+        tool=Tool(
+            name='get_s3_resilience_report',
+            description='Generates a complete S3 resiliency report.',
+            expected_output_class=ResourceResilienceOutput
         )
-        return output
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
+    )
+    print(output)
+    return output
 
 
-def main():
-    bucket_name = "production-data-vault"
-    metadata = [
-        {"name": "Versioning", "value": "Disabled"},
-        {"name": "MFA Delete", "value": False},
-        {"name": "MultiRegion", "value": False},
-        {"name": "ObjectLock", "value": False},
-        {"name": "ScheduledBackup", "value": False},
-        {"name": "PointInTimeRecovery", "value": False},
-        {"name": "DataReplication", "value": []},
-        {"name": "CrossRegionBackup", "value": False}
-    ]
-
-    output = get_s3_resilience_report(bucket_name, metadata)
-
+def _print_report(output: ResourceResilienceOutput):
     if not output or not output.report:
         print("Audit failed: The AI response was empty or incorrectly formatted.")
         return
 
-    # Render Output
     r = output.report
     print(f"\nS3 AUDIT: {r.resource_name} | Score: {r.overall_resilience_score}/10")
     print("-" * 60)
@@ -75,6 +53,24 @@ def main():
     print("\nCLI FIXES:")
     for cmd in output.aws_commands_to_fix:
         print(f"$ {cmd}")
+
+
+def main():
+    bucket_name = "production-data-vault"
+    dimensions = [
+        {"name": "Versioning", "value": "Disabled"},
+        {"name": "MFA Delete", "value": False},
+        {"name": "MultiRegion", "value": False},
+        {"name": "ObjectLock", "value": False},
+        {"name": "InventoryConfigs", "value": 0},
+        {"name": "ScheduledBackup", "value": False},
+        {"name": "PointInTimeRecovery", "value": False},
+        {"name": "DataReplication", "value": []},
+        {"name": "CrossRegionBackup", "value": False}
+    ]
+
+    output = get_s3_resilience_report(bucket_name, dimensions)
+    _print_report(output)
 
 
 if __name__ == '__main__':
