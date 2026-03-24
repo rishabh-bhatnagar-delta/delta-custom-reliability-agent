@@ -1,0 +1,105 @@
+### Initialize
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {"name": "http-client", "version": "1.0.0"}
+  }
+}
+
+### List tools
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {}
+}
+
+### List all AWS resources
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "list_aws_resources",
+    "arguments": {}
+  }
+}
+
+### Get resources for a specific stack
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "get_stack_resources",
+    "arguments": {
+      "stack_name": "SC-516669083107-pp-rxanjwo6lqrey"
+    }
+  }
+}
+
+### Get resource dimensions
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "get_resource_dimensions",
+    "arguments": {
+      "resource_id": "observability-job-status-516669083107-us-east-1-dev",
+      "resource_type": "AWS::S3::Bucket"
+    }
+  }
+}
+
+### Analyze resilience
+POST http://localhost:8000/mcp
+Content-Type: application/json
+Accept: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "analyze_resilience",
+    "arguments": {
+      "dimensions": [
+        {"name": "ResourceName", "value": "observability-job-status-516669083107-us-east-1-dev"},
+        {"name": "ResourceType", "value": "AWS::S3::Bucket"},
+        {"name": "Versioning", "value": "Disabled"},
+        {"name": "MFA Delete", "value": false},
+        {"name": "MultiRegion", "value": false},
+        {"name": "ObjectLock", "value": false},
+        {"name": "ScheduledBackup", "value": false},
+        {"name": "PointInTimeRecovery", "value": false},
+        {"name": "DataReplication", "value": []},
+        {"name": "CrossRegionBackup", "value": false}
+      ]
+    }
+  }
+}
