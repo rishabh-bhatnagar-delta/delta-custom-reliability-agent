@@ -60,6 +60,23 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="get_stack_resources",
+            description=(
+                "Returns all resources deployed in a specific CloudFormation stack. "
+                "Requires the stack name as input."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "stack_name": {
+                        "type": "string",
+                        "description": "The name of the CloudFormation stack.",
+                    },
+                },
+                "required": ["stack_name"],
+            },
+        ),
+        types.Tool(
             name="analyze_resilience",
             description=(
                 "Evaluates a resource's configuration against AWS Well-Architected "
@@ -121,6 +138,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     resources=resources
                 ))
             return _text(_serialize(results))
+
+        elif name == "get_stack_resources":
+            stack_name = arguments.get("stack_name")
+            if not stack_name:
+                raise MissingToolParam("Missing stack_name")
+            resources = await fetch_resources_in_stack(aws, stack_name)
+            return _text(_serialize(resources))
 
         elif name == "get_resource_dimensions":
             resource_id = arguments.get("resource_id")
