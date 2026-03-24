@@ -8,7 +8,7 @@ class RDSDimensionFetcher(DimensionFetcher):
     def get_resource_enum(self) -> DimensionSupportedResource:
         return DimensionSupportedResource.RDS
 
-    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id) -> List[DimensionOutput]:
         dimensions: List[DimensionOutput] = []
 
         rds_client = self.get_aws_client_for_resource()

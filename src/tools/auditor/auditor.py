@@ -36,7 +36,7 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
 
 async def get_resource_dimensions(aws: AWSClientProvider, physical_id, resource_type) -> List[DimensionOutput]:
     dimension_fetcher = get_dimension_fetcher_from_resource_type(resource_type, aws)
-    dimensions = dimension_fetcher.get_dimensions(physical_id)
+    dimensions = dimension_fetcher.get_dimensions(physical_id, resource_type=resource_type)
     return dimensions
 
 

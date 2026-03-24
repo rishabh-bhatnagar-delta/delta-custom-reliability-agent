@@ -8,7 +8,7 @@ class DynamoDBDimensionFetcher(DimensionFetcher):
     def get_resource_enum(self) -> DimensionSupportedResource:
         return DimensionSupportedResource.DynamoDB
 
-    def get_dimensions(self, physical_id: str) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id: str) -> List[DimensionOutput]:
         """
         Fetches complex DynamoDB configurations. Values are returned in their
         native types (bool, list, dict) for dynamic HTTP/JSON serialization.

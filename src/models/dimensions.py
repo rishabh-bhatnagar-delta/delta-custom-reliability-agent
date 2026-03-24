@@ -35,12 +35,23 @@ class DimensionFetcher(abc.ABC):
         self.aws = aws
 
     @abc.abstractmethod
-    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id) -> List[DimensionOutput]:
         raise NotImplementedError
 
     @abc.abstractmethod
     def get_resource_enum(self) -> DimensionSupportedResource:
         raise NotImplementedError
+
+    def get_dimensions(self, physical_id, resource_type: str) -> List[DimensionOutput]:
+        """Wraps _fetch_dimensions with resource metadata prepended."""
+        resource_enum = self.get_resource_enum()
+        metadata = [
+            DimensionOutput(name="ResourceName", value=physical_id),
+            DimensionOutput(name="ResourceType", value=resource_type),
+        ]
+
+        dimensions = self._fetch_dimensions(physical_id)
+        return metadata + dimensions
 
     def get_aws_client_for_resource(self) -> boto3.client:
         service_name = self.get_resource_enum().value

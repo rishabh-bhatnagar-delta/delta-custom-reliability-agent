@@ -8,7 +8,7 @@ class APIGatewayDimensionFetcher(DimensionFetcher):
     def get_resource_enum(self) -> DimensionSupportedResource:
         return DimensionSupportedResource.APIGateway
 
-    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id) -> List[DimensionOutput]:
         dimensions = []
         apigw_client = self.get_aws_client_for_resource()
         api_id = physical_id

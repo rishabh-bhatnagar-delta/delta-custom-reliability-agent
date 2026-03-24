@@ -10,7 +10,7 @@ class S3DimensionFetcher(DimensionFetcher):
     def get_resource_enum(self) -> DimensionSupportedResource:
         return DimensionSupportedResource.S3
 
-    def get_dimensions(self, physical_id: str) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id: str) -> List[DimensionOutput]:
         dimensions = []
         s3_client = self.get_aws_client_for_resource()
         # Ensure the backup client is initialized correctly from your provider

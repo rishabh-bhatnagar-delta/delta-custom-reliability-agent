@@ -8,7 +8,7 @@ class LambdaDimensionFetcher(DimensionFetcher):
     def get_resource_enum(self) -> DimensionSupportedResource:
         return DimensionSupportedResource.Lambda
 
-    def get_dimensions(self, physical_id) -> List[DimensionOutput]:
+    def _fetch_dimensions(self, physical_id) -> List[DimensionOutput]:
         dimensions: List[DimensionOutput] = []
         lambda_client = self.get_aws_client_for_resource()
         function_name = physical_id  # Use resource_arn directly
