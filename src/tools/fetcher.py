@@ -1,16 +1,16 @@
 import asyncio
 import json
 import logging
-from typing import List, Dict
+from typing import List
 
 from src.core.aws_client import AWSClientProvider
-from src.models.resources import CloudFormationStack, StackResource
+from src.models.resources import CloudFormationStack, StackResource, StackSummary
 
 # Initialize logger for internal tracking
 logger = logging.getLogger(__name__)
 
 
-async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[Dict[str, str]]:
+async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummary]:
     """
     Fetches only the basic metadata (Name and ID) for all active stacks.
     """
@@ -27,10 +27,10 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[Dict[str, s
 
         for page in pages:
             for summary in page.get('StackSummaries', []):
-                stacks.append({
-                    "stack_name": summary['StackName'],
-                    "stack_id": summary['StackId']
-                })
+                stacks.append(StackSummary(
+                    stack_name=summary['StackName'],
+                    stack_id=summary['StackId']
+                ))
         return stacks
     except Exception as e:
         logger.error(f"Failed to list stacks: {e}")
@@ -62,50 +62,35 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
         return []
 
 
-async def fetch_cft_resources(aws_provider: AWSClientProvider) -> List[CloudFormationStack]:
-    """
-    Orchestrator: Fetches stacks first, then fetches resources for each.
-    """
-    # 1. Get the list of stacks first
-    stacks_list = await fetch_only_stacks(aws_provider)
+async def fetch_and_print_stack(aws_provider: AWSClientProvider, stack: StackSummary):
+    """Fetches resources for a single stack and prints the result."""
+    stack_resources = await fetch_resources_in_stack(aws_provider, stack.stack_name)
 
-    all_stacks_data = []
+    stack_obj = CloudFormationStack(
+        stack_name=stack.stack_name,
+        stack_id=stack.stack_id,
+        resources=stack_resources
+    )
+    print(json.dumps(stack_obj.model_dump(), indent=2))
 
-    # 2. Iterate and get resources for each stack
+
+async def run_local():
+    print("--- Fetching All Stacks & Their Resources ---")
+    provider = AWSClientProvider()
+
+    stacks_list = await fetch_only_stacks(provider)
+
+    if not stacks_list:
+        print("No active CloudFormation stacks found.")
+        return
+
+    print(f"\n[i] Found {len(stacks_list)} active stack(s). Fetching resources...\n")
+
     for stack in stacks_list:
-        s_name = stack["stack_name"]
-        s_id = stack["stack_id"]
+        await fetch_and_print_stack(provider, stack)
 
-        stack_resources = await fetch_resources_in_stack(aws_provider, s_name)
-
-        all_stacks_data.append(CloudFormationStack(
-            stack_name=s_name,
-            stack_id=s_id,
-            resources=stack_resources
-        ))
-
-    return all_stacks_data
+    print(f"\n[✓] Successfully processed {len(stacks_list)} stacks.")
 
 
 if __name__ == "__main__":
-    async def run_local():
-        print("--- Fetching All Stacks & Their Resources ---")
-        try:
-            provider = AWSClientProvider()
-
-            # Execute the full orchestration
-            results = await fetch_cft_resources(provider)
-
-            if not results:
-                print("No active CloudFormation stacks found.")
-            else:
-                # Print full JSON output
-                output = [stack.model_dump() for stack in results]
-                print(json.dumps(output, indent=2))
-                print(f"\n[✓] Successfully processed {len(results)} stacks.")
-
-        except Exception as err:
-            print(f"Execution failed: {err}")
-
-
     asyncio.run(run_local())
