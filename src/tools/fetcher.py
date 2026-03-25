@@ -14,6 +14,7 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummar
     """
     Fetches basic metadata (Name, ID, blockCode tag) for all active stacks.
     """
+    logger.info("fetch_only_stacks: scanning CloudFormation stacks")
     client = aws_provider.get_cft_client()
     active_statuses = [
         'CREATE_COMPLETE', 'ROLLBACK_COMPLETE',
@@ -35,9 +36,10 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummar
                     stack_id=stack['StackId'],
                     block_code=tags.get('blockCode')
                 ))
+        logger.info(f"fetch_only_stacks: found {len(stacks)} active stack(s)")
         return stacks
     except Exception as e:
-        logger.error(f"Failed to list stacks: {e}")
+        logger.error(f"fetch_only_stacks: failed - {e}", exc_info=True)
         raise e
 
 
@@ -60,9 +62,10 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     resource_type=res['ResourceType'],
                     status=res['ResourceStatus']
                 ))
+        logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(resources)} resource(s)")
         return resources
     except Exception as e:
-        logger.warning(f"Could not list resources for stack {stack_name}: {e}")
+        logger.warning(f"fetch_resources_in_stack: failed for '{stack_name}' - {e}", exc_info=True)
         return []
 
 

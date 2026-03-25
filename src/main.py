@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import json
 import logging
@@ -8,6 +9,7 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from src.core.aws_client import AWSClientProvider
+from src.core.config import settings
 from src.core.exceptions import MissingToolParam
 from src.models.resources import CloudFormationStack
 from src.tools.auditor.auditor import get_resource_dimensions
@@ -18,6 +20,16 @@ from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 
 _lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
 get_lambda_resilience_report = _lambda_module.get_lambda_resilience_report
+
+# Configure root logger so all modules' loggers emit output
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+# Silence noisy third-party loggers
+for _noisy in ("botocore", "urllib3", "boto3", "s3transfer"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +138,22 @@ def _error(msg: str) -> list[types.TextContent]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    logger.info(f"Tool called: '{name}' with arguments: {arguments}")
     try:
         if name == "resource_fetcher":
+            logger.info("resource_fetcher: starting stack scan")
             stacks_list = await fetch_only_stacks(aws)
+            total = len(stacks_list)
+            logger.info(f"resource_fetcher: found {total} active stack(s), fetching resources in parallel")
+
+            # Fetch all stack resources in parallel
+            all_resources = await asyncio.gather(
+                *(fetch_resources_in_stack(aws, s.stack_name) for s in stacks_list)
+            )
+
             grouped = defaultdict(list)
-            for stack in stacks_list:
-                resources = await fetch_resources_in_stack(aws, stack.stack_name)
+            for idx, (stack, resources) in enumerate(zip(stacks_list, all_resources), 1):
+                logger.info(f"resource_fetcher: [{idx}/{total}] stack '{stack.stack_name}' -> {len(resources)} resource(s)")
                 stack_obj = CloudFormationStack(
                     stack_name=stack.stack_name,
                     stack_id=stack.stack_id,
@@ -140,19 +162,23 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 )
                 key = stack.block_code or "untagged"
                 grouped[key].append(stack_obj.model_dump())
+            logger.info(f"resource_fetcher: completed, returning {sum(len(v) for v in grouped.values())} stack(s) in {len(grouped)} group(s)")
             return _text(json.dumps(grouped, indent=2))
 
         elif name == "resource_fetcher_by_stacks":
             stack_name = arguments.get("stack_name")
             if not stack_name:
                 raise MissingToolParam("Missing stack_name")
+            logger.info(f"resource_fetcher_by_stacks: looking up stack '{stack_name}'")
 
             # Fetch tags for this stack
             stacks_list = await fetch_only_stacks(aws)
             stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
             block_code = stack_meta.block_code if stack_meta else None
+            logger.info(f"resource_fetcher_by_stacks: stack_meta found={stack_meta is not None}, block_code={block_code}")
 
             resources = await fetch_resources_in_stack(aws, stack_name)
+            logger.info(f"resource_fetcher_by_stacks: stack '{stack_name}' has {len(resources)} resource(s)")
             stack_obj = CloudFormationStack(
                 stack_name=stack_name,
                 stack_id=stack_meta.stack_id if stack_meta else stack_name,
@@ -169,7 +195,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 raise MissingToolParam("Missing resource_id")
             if not resource_type:
                 raise MissingToolParam("Missing resource_type")
+            logger.info(f"get_resource_dimensions: resource_id='{resource_id}', resource_type='{resource_type}'")
             results = await get_resource_dimensions(aws, resource_id, resource_type)
+            logger.info(f"get_resource_dimensions: returned {len(results) if isinstance(results, list) else 1} dimension(s)")
             return _text(_serialize(results))
 
         elif name == "analyze_resilience":
@@ -181,22 +209,28 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             dim_map = {d["name"]: d["value"] for d in dimensions}
             resource_name = dim_map.get("ResourceName")
             resource_type = dim_map.get("ResourceType", "")
+            logger.info(f"analyze_resilience: resource_name='{resource_name}', resource_type='{resource_type}'")
 
             if not resource_name:
                 raise MissingToolParam("Dimensions must include ResourceName")
 
             # Route to the correct analyzer based on resource type
             if "ApiGateway" in resource_type or "RestApi" in resource_type:
+                logger.info("analyze_resilience: routing to API Gateway analyzer")
                 result = get_apigw_resilience_report(dimensions)
             elif "Lambda" in resource_type or "Function" in resource_type:
+                logger.info("analyze_resilience: routing to Lambda analyzer")
                 result = get_lambda_resilience_report(resource_name, dimensions)
             elif "RDS" in resource_type or "DBInstance" in resource_type:
+                logger.info("analyze_resilience: routing to RDS analyzer")
                 result = get_rds_resilience_report(resource_name, dimensions)
             elif "S3" in resource_type or "Bucket" in resource_type:
+                logger.info("analyze_resilience: routing to S3 analyzer")
                 result = get_s3_resilience_report(resource_name, dimensions)
             else:
                 raise ValueError(f"Unsupported resource type for resilience analysis: {resource_type}")
 
+            logger.info(f"analyze_resilience: completed for '{resource_name}'")
             return _text(_serialize(result))
 
         else:

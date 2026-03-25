@@ -14,13 +14,18 @@ class AWSClientProvider:
 
         # Initializes session using the profile specified in .env
         self._session = boto3.Session(profile_name=settings.aws_profile)
+        self._client_cache = {}
 
     def get_cft_client(self):
-        """Returns a client for CloudFormation operations."""
-        return self._session.client('cloudformation', config=self.config)
+        """Returns a cached client for CloudFormation operations."""
+        if 'cloudformation' not in self._client_cache:
+            self._client_cache['cloudformation'] = self._session.client('cloudformation', config=self.config)
+        return self._client_cache['cloudformation']
 
     def get_client_by_service_name(self, service_name: str) -> boto3.client:
-        return self._session.client(service_name, config=self.config)
+        if service_name not in self._client_cache:
+            self._client_cache[service_name] = self._session.client(service_name, config=self.config)
+        return self._client_cache[service_name]
 
     @staticmethod
     def get_service_name_by_resource_type(resource_type: str):
