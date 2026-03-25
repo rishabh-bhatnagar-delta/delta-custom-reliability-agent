@@ -18,6 +18,7 @@ from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
+from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
 
 _lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
 get_lambda_resilience_report = _lambda_module.get_lambda_resilience_report
@@ -248,6 +249,7 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
         "DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
         "S3": lambda name, dims: get_s3_resilience_report(name, dims),
         "Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
+        "DynamoDB": lambda name, dims: get_dynamodb_resilience_report(dims),
     }
 
     for key, analyzer in analyzers.items():
