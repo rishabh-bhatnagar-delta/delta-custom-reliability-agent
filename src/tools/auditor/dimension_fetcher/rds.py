@@ -1,7 +1,19 @@
-from typing import List
+from datetime import datetime
+from typing import Any, List
 
 from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
+
+
+def _sanitize(obj: Any) -> Any:
+    """Recursively convert datetime objects to ISO-format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(i) for i in obj]
+    return obj
 
 
 class RDSDimensionFetcher(DimensionFetcher):
@@ -13,7 +25,7 @@ class RDSDimensionFetcher(DimensionFetcher):
 
         rds_client = self.get_aws_client_for_resource()
         db_instances = rds_client.describe_db_instances()
-        for db_instance in db_instances["DBInstances"]:
+        for db_instance in _sanitize(db_instances["DBInstances"]):
             # Multi AZ
             dimensions.append(
                 DimensionOutput(
