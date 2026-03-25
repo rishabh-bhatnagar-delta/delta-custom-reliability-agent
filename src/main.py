@@ -1,7 +1,7 @@
-import asyncio
 import importlib
 import json
 import logging
+from collections import defaultdict
 
 import mcp.types as types
 from mcp.server import Server
@@ -9,9 +9,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from src.core.aws_client import AWSClientProvider
 from src.core.exceptions import MissingToolParam
-from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack
 from src.models.resources import CloudFormationStack
 from src.tools.auditor.auditor import get_resource_dimensions
+from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
@@ -105,7 +105,6 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
-
 # --- Tool Routing ---
 
 def _serialize(obj) -> str:
@@ -130,28 +129,38 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     try:
         if name == "resource_fetcher":
             stacks_list = await fetch_only_stacks(aws)
-            results = []
+            grouped = defaultdict(list)
             for stack in stacks_list:
                 resources = await fetch_resources_in_stack(aws, stack.stack_name)
-                results.append(CloudFormationStack(
+                stack_obj = CloudFormationStack(
                     stack_name=stack.stack_name,
                     stack_id=stack.stack_id,
                     block_code=stack.block_code,
                     resources=resources
-                ))
-            return _text(_serialize(results))
+                )
+                key = stack.block_code or "untagged"
+                grouped[key].append(stack_obj.model_dump())
+            return _text(json.dumps(grouped, indent=2))
 
         elif name == "resource_fetcher_by_stacks":
             stack_name = arguments.get("stack_name")
             if not stack_name:
                 raise MissingToolParam("Missing stack_name")
+
+            # Fetch tags for this stack
+            stacks_list = await fetch_only_stacks(aws)
+            stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
+            block_code = stack_meta.block_code if stack_meta else None
+
             resources = await fetch_resources_in_stack(aws, stack_name)
-            result = CloudFormationStack(
+            stack_obj = CloudFormationStack(
                 stack_name=stack_name,
-                stack_id=stack_name,
+                stack_id=stack_meta.stack_id if stack_meta else stack_name,
+                block_code=block_code,
                 resources=resources
             )
-            return _text(_serialize([result]))
+            key = block_code or "untagged"
+            return _text(json.dumps({key: [stack_obj.model_dump()]}, indent=2))
 
         elif name == "get_resource_dimensions":
             resource_id = arguments.get("resource_id")
