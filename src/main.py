@@ -231,7 +231,8 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
     if not dimensions:
         raise MissingToolParam("Missing dimensions")
 
-    dim_map = {d["name"]: d["value"] for d in dimensions}
+    print(dimensions)
+    dim_map = {d["name"]: d.get("value") for d in dimensions}
     resource_name = dim_map.get("ResourceName")
     resource_type = dim_map.get("ResourceType", "")
 
@@ -250,6 +251,7 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
         "S3": lambda name, dims: get_s3_resilience_report(name, dims),
         "Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
         "DynamoDB": lambda name, dims: get_dynamodb_resilience_report(dims),
+        "Table": lambda name, dims: get_dynamodb_resilience_report(dims),
     }
 
     for key, analyzer in analyzers.items():
