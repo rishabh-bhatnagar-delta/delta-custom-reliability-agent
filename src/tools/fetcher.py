@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummary]:
     """
-    Fetches only the basic metadata (Name and ID) for all active stacks.
+    Fetches basic metadata (Name, ID, blockCode tag) for all active stacks.
     """
     client = aws_provider.get_cft_client()
     active_statuses = [
@@ -22,14 +22,18 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummar
 
     stacks = []
     try:
-        paginator = client.get_paginator('list_stacks')
-        pages = paginator.paginate(StackStatusFilter=active_statuses)
+        paginator = client.get_paginator('describe_stacks')
+        pages = paginator.paginate()
 
         for page in pages:
-            for summary in page.get('StackSummaries', []):
+            for stack in page.get('Stacks', []):
+                if stack.get('StackStatus') not in active_statuses:
+                    continue
+                tags = {t['Key']: t['Value'] for t in stack.get('Tags', [])}
                 stacks.append(StackSummary(
-                    stack_name=summary['StackName'],
-                    stack_id=summary['StackId']
+                    stack_name=stack['StackName'],
+                    stack_id=stack['StackId'],
+                    block_code=tags.get('blockCode')
                 ))
         return stacks
     except Exception as e:
@@ -69,6 +73,7 @@ async def fetch_and_print_stack(aws_provider: AWSClientProvider, stack: StackSum
     stack_obj = CloudFormationStack(
         stack_name=stack.stack_name,
         stack_id=stack.stack_id,
+        block_code=stack.block_code,
         resources=stack_resources
     )
     print(json.dumps(stack_obj.model_dump(), indent=2))

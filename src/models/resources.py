@@ -34,6 +34,7 @@ class StackSummary(BaseModel):
 
     stack_name: str = Field(..., description="The name of the CloudFormation stack.")
     stack_id: str = Field(..., description="The unique ARN of the stack.")
+    block_code: Optional[str] = Field(None, description="Value of the blockCode tag, if present.")
 
 
 class CloudFormationStack(BaseModel):
@@ -47,6 +48,7 @@ class CloudFormationStack(BaseModel):
         ...,
         description="The unique Amazon Resource Name (ARN) of the stack."
     )
+    block_code: Optional[str] = Field(None, description="Value of the blockCode tag, if present.")
     resources: List[StackResource] = Field(
         default_factory=list,
         description="A list of physical resources managed by this stack."

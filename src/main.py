@@ -136,6 +136,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 results.append(CloudFormationStack(
                     stack_name=stack.stack_name,
                     stack_id=stack.stack_id,
+                    block_code=stack.block_code,
                     resources=resources
                 ))
             return _text(_serialize(results))
