@@ -138,22 +138,33 @@ def _error(msg: str) -> list[types.TextContent]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    import time
+    start_time = time.time()
     logger.info(f"Tool called: '{name}' with arguments: {arguments}")
     try:
         if name == "resource_fetcher":
             logger.info("resource_fetcher: starting stack scan")
             stacks_list = await fetch_only_stacks(aws)
             total = len(stacks_list)
-            logger.info(f"resource_fetcher: found {total} active stack(s), fetching resources in parallel")
+            logger.info(f"resource_fetcher: found {total} active stack(s), fetching resources in parallel (max_concurrency=10)")
 
-            # Fetch all stack resources in parallel
+            # Cap concurrency to avoid CloudFormation API throttling
+            semaphore = asyncio.Semaphore(10)
+            completed = {"count": 0}
+
+            async def _fetch_with_progress(stack):
+                async with semaphore:
+                    resources = await fetch_resources_in_stack(aws, stack.stack_name)
+                completed["count"] += 1
+                logger.info(f"resource_fetcher: [{completed['count']}/{total}] stack '{stack.stack_name}' -> {len(resources)} resource(s)")
+                return resources
+
             all_resources = await asyncio.gather(
-                *(fetch_resources_in_stack(aws, s.stack_name) for s in stacks_list)
+                *(_fetch_with_progress(s) for s in stacks_list)
             )
 
             grouped = defaultdict(list)
-            for idx, (stack, resources) in enumerate(zip(stacks_list, all_resources), 1):
-                logger.info(f"resource_fetcher: [{idx}/{total}] stack '{stack.stack_name}' -> {len(resources)} resource(s)")
+            for stack, resources in zip(stacks_list, all_resources):
                 stack_obj = CloudFormationStack(
                     stack_name=stack.stack_name,
                     stack_id=stack.stack_id,
@@ -162,7 +173,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 )
                 key = stack.block_code or "untagged"
                 grouped[key].append(stack_obj.model_dump())
-            logger.info(f"resource_fetcher: completed, returning {sum(len(v) for v in grouped.values())} stack(s) in {len(grouped)} group(s)")
+            elapsed = time.time() - start_time
+            logger.info(f"resource_fetcher: completed in {elapsed:.2f}s, returning {sum(len(v) for v in grouped.values())} stack(s) in {len(grouped)} group(s)")
             return _text(json.dumps(grouped, indent=2))
 
         elif name == "resource_fetcher_by_stacks":
