@@ -1,19 +1,17 @@
 import boto3
 from botocore.config import Config
 
-from .config import settings
+from .constants import AWS_REGION, AWS_PROFILE
 
 
 class AWSClientProvider:
     def __init__(self):
-        # Configuration is pulled from the 'settings' object populated by .env
         self.config = Config(
-            region_name=settings.aws_region,
+            region_name=AWS_REGION,
             retries={'max_attempts': 10, 'mode': 'standard'}
         )
 
-        # Initializes session using the profile specified in .env
-        self._session = boto3.Session(profile_name=settings.aws_profile)
+        self._session = boto3.Session(profile_name=AWS_PROFILE)
         self._client_cache = {}
 
     def get_cft_client(self):
