@@ -1,7 +1,19 @@
-from typing import List
+from datetime import datetime
+from typing import Any, List
 
 from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
+
+
+def _sanitize(obj: Any) -> Any:
+    """Recursively convert datetime objects to ISO-format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(i) for i in obj]
+    return obj
 
 
 class DynamoDBDimensionFetcher(DimensionFetcher):
@@ -44,7 +56,7 @@ class DynamoDBDimensionFetcher(DimensionFetcher):
             # 2. Point In Time Recovery (PITR)
             pitr_resp = ddb.describe_continuous_backups(TableName=physical_id)
             pitr_status = pitr_resp['ContinuousBackupsDescription']['PointInTimeRecoveryDescription']
-            dimensions.append(DimensionOutput(name="PointInTimeRecovery", value=pitr_status))
+            dimensions.append(DimensionOutput(name="PointInTimeRecovery", value=_sanitize(pitr_status)))
 
             # 3. Auto Scaling Configuration
             as_client = self.get_aws_client_provider().get_client_by_service_name("application-autoscaling")
@@ -52,7 +64,7 @@ class DynamoDBDimensionFetcher(DimensionFetcher):
                 ServiceNamespace='dynamodb',
                 ResourceIds=[f"table/{physical_id}"]
             )
-            dimensions.append(DimensionOutput(name="AutoScaling", value=scaling_resp.get('ScalableTargets', [])))
+            dimensions.append(DimensionOutput(name="AutoScaling", value=_sanitize(scaling_resp.get('ScalableTargets', []))))
 
         except Exception as e:
             dimensions.append(DimensionOutput(name="Error", value={"message": str(e), "type": type(e).__name__}))

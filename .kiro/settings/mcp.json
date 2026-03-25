@@ -6,7 +6,8 @@
       "autoApprove": [
         "resource_fetcher",
         "resource_fetcher_by_stacks",
-        "resource_fetcher"
+        "resource_fetcher",
+        "get_resource_dimensions"
       ]
     }
   }
