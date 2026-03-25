@@ -5,7 +5,8 @@
       "disabled": false,
       "autoApprove": [
         "resource_fetcher",
-        "resource_fetcher_by_stacks"
+        "resource_fetcher_by_stacks",
+        "resource_fetcher"
       ]
     }
   }
