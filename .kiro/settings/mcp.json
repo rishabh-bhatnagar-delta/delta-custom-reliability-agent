@@ -4,8 +4,8 @@
       "url": "http://localhost:8000/mcp",
       "disabled": false,
       "autoApprove": [
-        "list_aws_resources",
-        "get_stack_resources"
+        "resource_fetcher",
+        "resource_fetcher_by_stacks"
       ]
     }
   }

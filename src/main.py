@@ -31,7 +31,7 @@ aws = AWSClientProvider()
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
-            name="list_aws_resources",
+            name="resource_fetcher",
             description=(
                 "Scans all CloudFormation stacks and returns a list of deployed "
                 "physical resources (API Gateway, RDS, DynamoDB, Lambda, S3, etc). "
@@ -61,7 +61,7 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="get_stack_resources",
+            name="resource_fetcher_by_stacks",
             description=(
                 "Returns all resources deployed in a specific CloudFormation stack. "
                 "Requires the stack name as input."
@@ -128,7 +128,7 @@ def _error(msg: str) -> list[types.TextContent]:
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     try:
-        if name == "list_aws_resources":
+        if name == "resource_fetcher":
             stacks_list = await fetch_only_stacks(aws)
             results = []
             for stack in stacks_list:
@@ -140,12 +140,17 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 ))
             return _text(_serialize(results))
 
-        elif name == "get_stack_resources":
+        elif name == "resource_fetcher_by_stacks":
             stack_name = arguments.get("stack_name")
             if not stack_name:
                 raise MissingToolParam("Missing stack_name")
             resources = await fetch_resources_in_stack(aws, stack_name)
-            return _text(_serialize(resources))
+            result = CloudFormationStack(
+                stack_name=stack_name,
+                stack_id=stack_name,
+                resources=resources
+            )
+            return _text(_serialize([result]))
 
         elif name == "get_resource_dimensions":
             resource_id = arguments.get("resource_id")
