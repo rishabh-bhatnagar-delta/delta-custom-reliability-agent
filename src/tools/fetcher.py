@@ -1,19 +1,63 @@
 import asyncio
 import json
 import logging
-from typing import List
+import time
+from typing import Dict, List, Optional, Tuple
 
 from src.core.aws_client import AWSClientProvider
+from src.core.constants import CACHE_TTL_MINUTES
 from src.models.resources import CloudFormationStack, StackResource, StackSummary
 
 # Initialize logger for internal tracking
 logger = logging.getLogger(__name__)
 
+# TTL cache: {stack_name: (resources, timestamp)}
+_CACHE_TTL = CACHE_TTL_MINUTES * 60
+_resource_cache: Dict[str, Tuple[List[StackResource], float]] = {}
+_stacks_cache: Optional[Tuple[List[StackSummary], float]] = None
 
-async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummary]:
+
+def _get_cached_resources(stack_name: str) -> Optional[List[StackResource]]:
+    """Return cached resources if still valid, else None."""
+    if stack_name in _resource_cache:
+        resources, ts = _resource_cache[stack_name]
+        if time.time() - ts < _CACHE_TTL:
+            return resources
+        del _resource_cache[stack_name]
+    return None
+
+
+def _get_cached_stacks() -> Optional[List[StackSummary]]:
+    """Return cached stacks list if still valid, else None."""
+    global _stacks_cache
+    if _stacks_cache is not None:
+        stacks, ts = _stacks_cache
+        if time.time() - ts < _CACHE_TTL:
+            return stacks
+        _stacks_cache = None
+    return None
+
+
+def clear_cache():
+    """Clear all cached data."""
+    global _stacks_cache
+    _resource_cache.clear()
+    _stacks_cache = None
+    logger.info("cache: cleared all cached stacks and resources")
+
+
+async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool = False) -> List[StackSummary]:
     """
     Fetches basic metadata (Name, ID, blockCode tag) for all active stacks.
     """
+    global _stacks_cache
+
+    if not force_refresh:
+        cached = _get_cached_stacks()
+        if cached is not None:
+            logger.info(f"fetch_only_stacks: returning {len(cached)} stack(s) from cache")
+            return cached
+
     logger.info("fetch_only_stacks: scanning CloudFormation stacks")
     client = aws_provider.get_cft_client()
     active_statuses = [
@@ -36,17 +80,24 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider) -> List[StackSummar
                     stack_id=stack['StackId'],
                     block_code=tags.get('blockCode')
                 ))
-        logger.info(f"fetch_only_stacks: found {len(stacks)} active stack(s)")
+        _stacks_cache = (stacks, time.time())
+        logger.info(f"fetch_only_stacks: found {len(stacks)} active stack(s), cached")
         return stacks
     except Exception as e:
         logger.error(f"fetch_only_stacks: failed - {e}", exc_info=True)
         raise e
 
 
-async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: str) -> List[StackResource]:
+async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: str, force_refresh: bool = False) -> List[StackResource]:
     """
     Fetches all resources for a specific CloudFormation stack.
     """
+    if not force_refresh:
+        cached = _get_cached_resources(stack_name)
+        if cached is not None:
+            logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(cached)} resource(s) (cached)")
+            return cached
+
     client = aws_provider.get_cft_client()
     resources = []
 
@@ -62,7 +113,8 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     resource_type=res['ResourceType'],
                     status=res['ResourceStatus']
                 ))
-        logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(resources)} resource(s)")
+        _resource_cache[stack_name] = (resources, time.time())
+        logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(resources)} resource(s), cached")
         return resources
     except Exception as e:
         logger.warning(f"fetch_resources_in_stack: failed for '{stack_name}' - {e}", exc_info=True)

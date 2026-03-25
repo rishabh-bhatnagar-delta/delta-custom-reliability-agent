@@ -10,10 +10,11 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from src.core.aws_client import AWSClientProvider
 from src.core.config import settings
+from src.core.constants import MAX_CONCURRENCY
 from src.core.exceptions import MissingToolParam
 from src.models.resources import CloudFormationStack
 from src.tools.auditor.auditor import get_resource_dimensions
-from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack
+from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear_cache
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
@@ -47,9 +48,18 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Scans all CloudFormation stacks and returns a list of deployed "
                 "physical resources (API Gateway, RDS, DynamoDB, Lambda, S3, etc). "
-                "Use this as the starting point for infrastructure auditing."
+                "Use this as the starting point for infrastructure auditing. "
+                "Results are cached for 15 minutes. Use force_refresh to bypass cache."
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "force_refresh": {
+                        "type": "boolean",
+                        "description": "Bypass cache and fetch fresh data from AWS. Default: false.",
+                    },
+                },
+            },
         ),
         types.Tool(
             name="get_resource_dimensions",
@@ -76,7 +86,8 @@ async def list_tools() -> list[types.Tool]:
             name="resource_fetcher_by_stacks",
             description=(
                 "Returns all resources deployed in a specific CloudFormation stack. "
-                "Requires the stack name as input."
+                "Requires the stack name as input. "
+                "Results are cached for 15 minutes. Use force_refresh to bypass cache."
             ),
             inputSchema={
                 "type": "object",
@@ -84,6 +95,10 @@ async def list_tools() -> list[types.Tool]:
                     "stack_name": {
                         "type": "string",
                         "description": "The name of the CloudFormation stack.",
+                    },
+                    "force_refresh": {
+                        "type": "boolean",
+                        "description": "Bypass cache and fetch fresh data from AWS. Default: false.",
                     },
                 },
                 "required": ["stack_name"],
@@ -143,18 +158,21 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     logger.info(f"Tool called: '{name}' with arguments: {arguments}")
     try:
         if name == "resource_fetcher":
-            logger.info("resource_fetcher: starting stack scan")
-            stacks_list = await fetch_only_stacks(aws)
+            force_refresh = arguments.get("force_refresh", False)
+            if force_refresh:
+                clear_cache()
+            logger.info(f"resource_fetcher: starting stack scan (force_refresh={force_refresh})")
+            stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
             total = len(stacks_list)
-            logger.info(f"resource_fetcher: found {total} active stack(s), fetching resources in parallel (max_concurrency=10)")
+            logger.info(f"resource_fetcher: found {total} active stack(s), fetching resources in parallel (max_concurrency={MAX_CONCURRENCY})")
 
             # Cap concurrency to avoid CloudFormation API throttling
-            semaphore = asyncio.Semaphore(10)
+            semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
             completed = {"count": 0}
 
             async def _fetch_with_progress(stack):
                 async with semaphore:
-                    resources = await fetch_resources_in_stack(aws, stack.stack_name)
+                    resources = await fetch_resources_in_stack(aws, stack.stack_name, force_refresh=force_refresh)
                 completed["count"] += 1
                 logger.info(f"resource_fetcher: [{completed['count']}/{total}] stack '{stack.stack_name}' -> {len(resources)} resource(s)")
                 return resources
@@ -179,17 +197,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         elif name == "resource_fetcher_by_stacks":
             stack_name = arguments.get("stack_name")
+            force_refresh = arguments.get("force_refresh", False)
             if not stack_name:
                 raise MissingToolParam("Missing stack_name")
-            logger.info(f"resource_fetcher_by_stacks: looking up stack '{stack_name}'")
+            logger.info(f"resource_fetcher_by_stacks: looking up stack '{stack_name}' (force_refresh={force_refresh})")
 
             # Fetch tags for this stack
-            stacks_list = await fetch_only_stacks(aws)
+            stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
             stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
             block_code = stack_meta.block_code if stack_meta else None
             logger.info(f"resource_fetcher_by_stacks: stack_meta found={stack_meta is not None}, block_code={block_code}")
 
-            resources = await fetch_resources_in_stack(aws, stack_name)
+            resources = await fetch_resources_in_stack(aws, stack_name, force_refresh=force_refresh)
             logger.info(f"resource_fetcher_by_stacks: stack '{stack_name}' has {len(resources)} resource(s)")
             stack_obj = CloudFormationStack(
                 stack_name=stack_name,
