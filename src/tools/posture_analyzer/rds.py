@@ -1,91 +1,139 @@
-import json
 from typing import List, Dict, Any
 
-from dotenv import load_dotenv
-
-from src.models.ai import Tool
-from src.models.resiliency_report import ResourceResilienceOutput
-from src.utils.call_ai import ask_ai
-
-load_dotenv(verbose=True)
+from src.models.resiliency_report import (
+    ResourceResilienceOutput,
+    ResiliencyReport,
+    ResilienceGap,
+)
 
 
 def get_rds_resilience_report(db_instance_id: str, dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
-    """
-    Evaluates RDS instance configuration against AWS Well-Architected Reliability standards.
+    """Rule-based resilience evaluation for RDS."""
+    dim_map = {d["name"]: d.get("value") for d in dimensions}
 
-    Args:
-        db_instance_id: The identifier for the RDS DB instance.
-        dimensions: List of configuration states (e.g., MultiAZ, BackupRetention).
+    gaps: List[ResilienceGap] = []
+    recommendations: List[str] = []
+    cli_commands: List[str] = []
+    score = 10
 
-    Returns:
-        ResourceResilienceOutput: Structured metadata and remediation CLI commands.
-    """
-
-    # Targeting RDS-specific architecture within the generic agent framework
-    user_prompt = f"""
-    Perform a Resilience Audit on the RDS DB Instance: "{db_instance_id}".
-
-    RDS Configuration Metadata:
-    {json.dumps(dimensions, indent=2)}
-
-    Task:
-    1. Identify resilience gaps using AWS Well-Architected Reliability standards for Databases.
-    2. Populate the 'recommendations' list with high-level architectural fixes.
-    3. Populate the 'aws_commands_to_fix' list with exact AWS CLI commands for "{db_instance_id}".
-    4. Populate the 'report' object with the score, gaps, and architectural summary.
-
-    Constraint: Ensure all three top-level fields (recommendations, aws_commands_to_fix, report) are populated.
-    """
-
-    return ask_ai(
-        messages=[{
-            "role": "user",
-            "content": [{"text": user_prompt}]
-        }],
-        tool=Tool(
-            name='get_rds_resilience_report',
-            description='Audits RDS database availability and durability against AWS best practices.',
-            expected_output_class=ResourceResilienceOutput
+    # 1. Multi-AZ
+    if not dim_map.get("MultiAZ", False):
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="Multi-AZ Deployment",
+            status="DISABLED",
+            impact="Single-AZ deployment; AZ failure causes downtime.",
+        ))
+        recommendations.append("Enable Multi-AZ for automatic failover.")
+        cli_commands.append(
+            f"aws rds modify-db-instance --db-instance-identifier {db_instance_id} "
+            f"--multi-az --apply-immediately"
         )
+
+    # 2. Backup Retention
+    retention = dim_map.get("BackupRetentionPeriod", 0)
+    if retention == 0:
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="Automated Backups",
+            status="DISABLED",
+            impact="No automated backups; data loss risk on failure.",
+        ))
+        recommendations.append("Enable automated backups with adequate retention period.")
+        cli_commands.append(
+            f"aws rds modify-db-instance --db-instance-identifier {db_instance_id} "
+            f"--backup-retention-period 7 --apply-immediately"
+        )
+    elif retention < 7:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Backup Retention Period",
+            status=f"{retention} days",
+            impact="Short retention window; limits recovery options for older data.",
+        ))
+        recommendations.append("Increase backup retention to at least 7 days.")
+
+    # 3. Point-in-Time Recovery
+    if not dim_map.get("PointInTimeRecovery", False):
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="Point-in-Time Recovery",
+            status="DISABLED",
+            impact="Cannot restore to a specific second; limits recovery from corruption.",
+        ))
+        recommendations.append("Enable PITR by setting backup retention period > 0.")
+
+    # 4. Deletion Protection
+    if not dim_map.get("DeletionProtection", False):
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Deletion Protection",
+            status="DISABLED",
+            impact="Instance can be accidentally deleted.",
+        ))
+        recommendations.append("Enable deletion protection.")
+        cli_commands.append(
+            f"aws rds modify-db-instance --db-instance-identifier {db_instance_id} "
+            f"--deletion-protection --apply-immediately"
+        )
+
+    # 5. Read Replicas
+    replicas = dim_map.get("Read Replica IDs", [])
+    if not replicas:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Read Replicas",
+            status="NONE",
+            impact="No read replicas; no read scaling or cross-region disaster recovery.",
+        ))
+        recommendations.append("Create read replicas for read scaling and cross-region DR.")
+        cli_commands.append(
+            f"aws rds create-db-instance-read-replica "
+            f"--db-instance-identifier {db_instance_id}-replica "
+            f"--source-db-instance-identifier {db_instance_id}"
+        )
+
+    # 6. Minor Version Upgrade
+    if not dim_map.get("MinorVersionUpgrade", False):
+        gaps.append(ResilienceGap(
+            name="Auto Minor Version Upgrade",
+            status="DISABLED",
+            impact="Missing security patches and bug fixes from minor version updates.",
+        ))
+        recommendations.append("Enable automatic minor version upgrades.")
+        cli_commands.append(
+            f"aws rds modify-db-instance --db-instance-identifier {db_instance_id} "
+            f"--auto-minor-version-upgrade --apply-immediately"
+        )
+
+    # 7. Maintenance Window
+    maint = dim_map.get("MaintenanceWindow")
+    if not maint:
+        gaps.append(ResilienceGap(
+            name="Maintenance Window",
+            status="NOT SET",
+            impact="AWS chooses maintenance window; may conflict with peak traffic.",
+        ))
+        recommendations.append("Set a preferred maintenance window during low-traffic hours.")
+
+    score = max(0, min(10, score))
+
+    total_issues = len([g for g in gaps if g.status not in ("ENABLED",)])
+    if score >= 8:
+        summary = f"RDS '{db_instance_id}' has a strong reliability posture with {total_issues} minor gap(s)."
+    elif score >= 5:
+        summary = f"RDS '{db_instance_id}' has moderate reliability risks. {total_issues} gap(s) need attention."
+    else:
+        summary = f"RDS '{db_instance_id}' has significant reliability gaps. {total_issues} issue(s) require remediation."
+
+    return ResourceResilienceOutput(
+        recommendations=recommendations,
+        aws_commands_to_fix=cli_commands,
+        report=ResiliencyReport(
+            resource_name=db_instance_id,
+            resilience_gaps=gaps,
+            overall_resilience_score=score,
+            max_resilience_score=10,
+            summary=summary,
+        ),
     )
-
-
-def main():
-    """
-    Example execution for an RDS instance resilience audit.
-    """
-    db_id = "prod-billing-db"
-
-    dimensions = [{"name": "MultiAZ", "value": False}, {"name": "Read Replica IDs", "value": []},
-                  {"name": "BackupRetentionPeriod", "value": 7}, {"name": "PointInTimeRecovery", "value": True},
-                  {"name": "AutomatedBackups", "value": True}, {"name": "DeletionProtection", "value": False},
-                  {"name": "MinorVersionUpgrade", "value": True},
-                  {"name": "MaintenanceWindow", "value": "sat:07:05-sat:07:35"}]
-
-    # Trigger AI analysis
-    output: ResourceResilienceOutput = get_rds_resilience_report(db_id, dimensions)
-
-    if not output or not output.report:
-        print("Audit failed: The AI response was empty or incorrectly formatted.")
-        return
-
-    report = output.report
-
-    print(f"\nRDS RESILIENCE AUDIT: {report.resource_name}")
-    print(f"POSTURE SCORE: {report.overall_resilience_score}/{report.max_resilience_score}")
-    print("-" * 60)
-    print(f"SUMMARY:\n{report.summary}\n")
-
-    print("GAPS & ARCHITECTURAL IMPACTS:")
-    for gap in report.resilience_gaps:
-        print(f"× {gap.name} (Status: {gap.status})")
-        print(f"  Impact: {gap.impact}")
-
-    print("\nREMEDIATION ROADMAP (AWS CLI):")
-    for cmd in output.aws_commands_to_fix:
-        print(f"$ {cmd}")
-
-
-if __name__ == '__main__':
-    main()

@@ -1,87 +1,140 @@
-import json
 from typing import List, Dict, Any
 
-from dotenv import load_dotenv
-
-from src.models.ai import Tool
-from src.models.resiliency_report import ResourceResilienceOutput
-from src.utils.call_ai import ask_ai
-
-load_dotenv(verbose=True)
+from src.models.resiliency_report import (
+    ResourceResilienceOutput,
+    ResiliencyReport,
+    ResilienceGap,
+)
 
 
 def get_lambda_resilience_report(function_name: str, dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
-    """
-    Evaluates AWS Lambda configuration against Well-Architected Serverless Reliability standards.
-    """
-    user_prompt = f"""
-    Perform a Resilience Audit on the AWS Lambda Function: "{function_name}".
+    """Rule-based resilience evaluation for AWS Lambda."""
+    dim_map = {d["name"]: d.get("value") for d in dimensions}
 
-    Lambda Configuration Metadata:
-    {json.dumps(dimensions, indent=2)}
+    gaps: List[ResilienceGap] = []
+    recommendations: List[str] = []
+    cli_commands: List[str] = []
+    score = 10
 
-    Task:
-    1. Identify resilience gaps using AWS Well-Architected Serverless Reliability standards.
-    2. Populate the 'recommendations' list with high-level architectural fixes.
-    3. Populate the 'aws_commands_to_fix' list with exact AWS CLI commands for "{function_name}".
-    4. Populate the 'report' object with the score, gaps, and architectural summary.
-
-    Constraint: Ensure all three top-level fields (recommendations, aws_commands_to_fix, report) are populated.
-    """
-
-    return ask_ai(
-        messages=[{
-            "role": "user",
-            "content": [{"text": user_prompt}]
-        }],
-        tool=Tool(
-            name='get_lambda_resilience_report',
-            description='Audits AWS Lambda for serverless resilience, error handling, and performance availability.',
-            expected_output_class=ResourceResilienceOutput
+    # 1. Dead Letter Queue
+    dlq = dim_map.get("DLQ")
+    if not dlq:
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="Dead Letter Queue (DLQ)",
+            status="NOT CONFIGURED",
+            impact="Failed async invocations are silently dropped; no way to recover or retry.",
+        ))
+        recommendations.append("Configure a DLQ (SQS or SNS) to capture failed invocations.")
+        cli_commands.append(
+            f"aws lambda update-function-configuration --function-name {function_name} "
+            f"--dead-letter-config TargetArn=arn:aws:sqs:REGION:ACCOUNT:dlq-queue"
         )
+
+    # 2. Reserved Concurrency
+    concurrency = dim_map.get("ReservedConcurrency")
+    if concurrency is None:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Reserved Concurrency",
+            status="NOT SET",
+            impact="Function shares concurrency pool; noisy neighbors can throttle it.",
+        ))
+        recommendations.append("Set reserved concurrency to guarantee execution capacity.")
+        cli_commands.append(
+            f"aws lambda put-function-concurrency --function-name {function_name} "
+            f"--reserved-concurrent-executions 100"
+        )
+
+    # 3. Retry Configuration
+    retries = dim_map.get("RetryConfiguration")
+    if retries is None:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Retry Configuration",
+            status="DEFAULT (2)",
+            impact="Using default retry count; may cause excessive retries or insufficient recovery.",
+        ))
+        recommendations.append("Explicitly configure retry attempts based on function idempotency.")
+        cli_commands.append(
+            f"aws lambda put-function-event-invoke-config --function-name {function_name} "
+            f"--maximum-retry-attempts 1"
+        )
+
+    # 4. Maximum Event Age
+    max_age = dim_map.get("MaximumEventAge")
+    if max_age is None:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Maximum Event Age",
+            status="DEFAULT (6h)",
+            impact="Stale events may be processed; default 6-hour window is too long for most use cases.",
+        ))
+        recommendations.append("Set maximum event age to discard stale invocations.")
+        cli_commands.append(
+            f"aws lambda put-function-event-invoke-config --function-name {function_name} "
+            f"--maximum-event-age-in-seconds 3600"
+        )
+
+    # 5. VPC / Multi-AZ
+    vpc_multi_az = dim_map.get("VPCMultiAZ", False)
+    multi_az = dim_map.get("MultiAZ", False)
+    if not vpc_multi_az and not multi_az:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="VPC Multi-AZ",
+            status="NOT IN VPC or SINGLE AZ",
+            impact="Function not deployed across multiple AZs; AZ failure impacts availability.",
+        ))
+        recommendations.append("Deploy Lambda in a VPC with subnets across multiple AZs.")
+
+    # 6. Memory
+    memory = dim_map.get("Memory", 128)
+    if memory and memory <= 128:
+        gaps.append(ResilienceGap(
+            name="Memory Allocation",
+            status=f"{memory} MB",
+            impact="Minimum memory; may cause slow cold starts and timeouts under load.",
+        ))
+        recommendations.append("Consider increasing memory allocation for better CPU and performance.")
+
+    # 7. Timeout
+    timeout = dim_map.get("Timeout", 3)
+    if timeout and timeout <= 3:
+        gaps.append(ResilienceGap(
+            name="Timeout Configuration",
+            status=f"{timeout}s",
+            impact="Very short timeout; downstream latency spikes will cause failures.",
+        ))
+        recommendations.append("Increase timeout to accommodate downstream service latency.")
+
+    # 8. SnapStart
+    snap_start = dim_map.get("SnapStart", {})
+    if isinstance(snap_start, dict) and snap_start.get("ApplyOn") == "None":
+        gaps.append(ResilienceGap(
+            name="SnapStart",
+            status="DISABLED",
+            impact="Cold starts not optimized; higher latency for Java/Python runtimes.",
+        ))
+
+    score = max(0, min(10, score))
+
+    total_issues = len([g for g in gaps if "ENABLED" not in g.status])
+    if score >= 8:
+        summary = f"Lambda '{function_name}' has a strong reliability posture with {total_issues} minor gap(s)."
+    elif score >= 5:
+        summary = f"Lambda '{function_name}' has moderate reliability risks. {total_issues} gap(s) need attention."
+    else:
+        summary = f"Lambda '{function_name}' has significant reliability gaps. {total_issues} issue(s) require remediation."
+
+    return ResourceResilienceOutput(
+        recommendations=recommendations,
+        aws_commands_to_fix=cli_commands,
+        report=ResiliencyReport(
+            resource_name=function_name,
+            resilience_gaps=gaps,
+            overall_resilience_score=score,
+            max_resilience_score=10,
+            summary=summary,
+        ),
     )
-
-
-def main():
-    function_name = "order-processor-handler"
-
-    # Specific metadata provided for the Lambda function
-    metadata = [
-        {"name": "MultiAZ", "value": False},
-        {"name": "ReservedConcurrency", "value": None},
-        {"name": "SnapStart", "value": {"ApplyOn": "None", "OptimizationStatus": "Off"}},
-        {"name": "DLQ", "value": None},
-        {"name": "RetryConfiguration", "value": None},
-        {"name": "MaximumEventAge", "value": None},
-        {"name": "VPCMultiAZ", "value": False},
-        {"name": "EventSourceMappings", "value": []},
-        {"name": "Memory", "value": 128},
-        {"name": "Timeout", "value": 3}
-    ]
-
-    # Trigger AI analysis
-    output: ResourceResilienceOutput = get_lambda_resilience_report(function_name, metadata)
-
-    if not output or not output.report:
-        print("Audit failed: The AI response was empty or incorrectly formatted.")
-        return
-
-    report = output.report
-
-    print(f"\nLAMBDA RESILIENCE AUDIT: {report.resource_name}")
-    print(f"POSTURE SCORE: {report.overall_resilience_score}/{report.max_resilience_score}")
-    print("-" * 60)
-    print(f"SUMMARY:\n{report.summary}\n")
-
-    print("GAPS & ARCHITECTURAL IMPACTS:")
-    for gap in report.resilience_gaps:
-        print(f"× {gap.name} (Status: {gap.status})")
-        print(f"  Impact: {gap.impact}")
-
-    print("\nREMEDIATION ROADMAP (AWS CLI):")
-    for cmd in output.aws_commands_to_fix:
-        print(f"$ {cmd}")
-
-
-if __name__ == '__main__':
-    main()

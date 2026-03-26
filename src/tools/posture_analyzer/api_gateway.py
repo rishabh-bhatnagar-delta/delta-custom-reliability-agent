@@ -1,89 +1,111 @@
-import json
 from typing import List, Dict, Any
 
-from dotenv import load_dotenv
-
-from src.models.ai import Tool
-from src.models.resiliency_report import ResourceResilienceOutput
-from src.utils.call_ai import ask_ai
-
-load_dotenv(verbose=True)
+from src.models.resiliency_report import (
+    ResourceResilienceOutput,
+    ResiliencyReport,
+    ResilienceGap,
+)
 
 
 def get_apigw_resilience_report(dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
-    """
-    Evaluates API Gateway configuration against Well-Architected Reliability standards.
-    Extracts the API identifier directly from the provided metadata.
-    """
+    """Rule-based resilience evaluation for API Gateway."""
+    dim_map = {d["name"]: d.get("value") for d in dimensions}
+    resource_name = dim_map.get("ResourceName", "Unknown API Gateway")
 
-    resource_id = next((d['value'] for d in dimensions if d['name'] in ['ApiName', 'ApiId', 'Name']), "AWS API Gateway")
+    gaps: List[ResilienceGap] = []
+    recommendations: List[str] = []
+    cli_commands: List[str] = []
+    score = 10
 
-    user_prompt = f"""
-    Perform a Resilience Audit on the following AWS API Gateway: "{resource_id}".
+    api_id = resource_name
 
-    Metadata:
-    {json.dumps(dimensions, indent=2)}
+    # 1. Multi-Region
+    multi_region = dim_map.get("MultiRegion", False)
+    if not multi_region:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="Multi-Region Deployment",
+            status="REGIONAL ONLY",
+            impact="API is deployed in a single region; regional outage causes full unavailability.",
+        ))
+        recommendations.append("Consider deploying API in multiple regions with Route 53 failover.")
 
-    Task:
-    1. Apply AWS Well-Architected Reliability Pillar standards for API Management.
-    2. Analyze specific risks based on the provided dimensions: 
-       - Evaluate 'Timeout' (3s) as the integration response limit.
-       - Evaluate lack of 'DLQ' and 'RetryConfiguration' for backend integration failures.
-       - Evaluate 'VPCMultiAZ' for private endpoint availability.
-    3. Infer architectural impact (e.g., risk of cascading failures, lack of request buffering, or endpoint isolation issues).
-    4. Generate exact AWS CLI commands to remediate gaps for this API Gateway.
+    # 2. Stage count
+    stage_count = dim_map.get("StageCount", 0)
+    if stage_count == 0:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="API Stages",
+            status="NONE",
+            impact="No stages deployed; API is not serving traffic.",
+        ))
 
-    Populate the ResourceResilienceOutput strictly.
-    """
+    # 3. Caching
+    cache_stages = dim_map.get("CacheEnabledStages", 0)
+    if cache_stages == 0:
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="API Caching",
+            status="DISABLED",
+            impact="No caching configured; backend receives all requests, increasing latency and load.",
+        ))
+        recommendations.append("Enable API caching to reduce backend load and improve response times.")
 
-    return ask_ai(
-        messages=[{
-            "role": "user",
-            "content": [{"text": user_prompt}]
-        }],
-        tool=Tool(
-            name='get_resiliency_report',
-            description='Audits AWS API Gateway for traffic resilience, availability, and error handling.',
-            expected_output_class=ResourceResilienceOutput
+    # 4. Throttling
+    throttling_stages = dim_map.get("ThrottlingStages", 0)
+    if throttling_stages == 0:
+        score -= 2
+        gaps.append(ResilienceGap(
+            name="Throttling Configuration",
+            status="NOT CONFIGURED",
+            impact="No throttling; API is vulnerable to traffic spikes and abuse.",
+        ))
+        recommendations.append("Configure method-level throttling to protect backend services.")
+        cli_commands.append(
+            f"aws apigateway update-stage --rest-api-id {api_id} --stage-name prod "
+            f"--patch-operations op=replace,path=/~1/throttling/rateLimit,value=1000"
         )
+
+    # 5. Tracing
+    tracing_stages = dim_map.get("TracingStages", [])
+    if not tracing_stages:
+        score -= 1
+        gaps.append(ResilienceGap(
+            name="X-Ray Tracing",
+            status="DISABLED",
+            impact="No distributed tracing; difficult to diagnose latency and errors.",
+        ))
+        recommendations.append("Enable X-Ray tracing for observability and debugging.")
+        cli_commands.append(
+            f"aws apigateway update-stage --rest-api-id {api_id} --stage-name prod "
+            f"--patch-operations op=replace,path=/tracingEnabled,value=true"
+        )
+
+    # 6. Stages detail check
+    stages = dim_map.get("Stages", [])
+    if isinstance(stages, list):
+        for stage in stages:
+            if isinstance(stage, dict) and not stage.get("cacheEnabled") and not stage.get("tracingEnabled"):
+                pass  # already covered above
+
+    score = max(0, min(10, score))
+
+    total_issues = len([g for g in gaps if g.status not in ("ENABLED",)])
+    if score >= 8:
+        summary = f"API '{resource_name}' has a solid reliability posture with {total_issues} minor gap(s)."
+    elif score >= 5:
+        summary = f"API '{resource_name}' has moderate reliability risks. {total_issues} gap(s) need attention."
+    else:
+        summary = f"API '{resource_name}' has significant reliability gaps. {total_issues} issue(s) require remediation."
+
+    return ResourceResilienceOutput(
+        recommendations=recommendations,
+        aws_commands_to_fix=cli_commands,
+        report=ResiliencyReport(
+            resource_name=resource_name,
+            resilience_gaps=gaps,
+            overall_resilience_score=score,
+            max_resilience_score=10,
+            summary=summary,
+        ),
     )
-
-
-def main():
-    metadata = [
-        {"name": "MultiAZ", "value": False},
-        {"name": "ReservedConcurrency", "value": None},
-        {"name": "SnapStart", "value": {"ApplyOn": "None", "OptimizationStatus": "Off"}},
-        {"name": "DLQ", "value": None},
-        {"name": "RetryConfiguration", "value": None},
-        {"name": "MaximumEventAge", "value": None},
-        {"name": "VPCMultiAZ", "value": False},
-        {"name": "EventSourceMappings", "value": []},
-        {"name": "Memory", "value": 128},
-        {"name": "Timeout", "value": 3}
-    ]
-
-    output: ResourceResilienceOutput = get_apigw_resilience_report(metadata)
-
-    if not output or not output.report:
-        print("Audit failed to generate a valid report.")
-        return
-
-    report = output.report
-
-    print(f"\nAPI GATEWAY AUDIT: {report.resource_name}")
-    print(f"POSTURE SCORE: {report.overall_resilience_score}/10")
-    print("-" * 60)
-    print(f"SUMMARY: {report.summary}\n")
-
-    print("GAPS IDENTIFIED:")
-    for gap in report.resilience_gaps:
-        print(f"× {gap.name} ({gap.status}): {gap.impact}")
-
-    print("\nREMEDIATION COMMANDS:")
-    for cmd in output.aws_commands_to_fix:
-        print(f"$ {cmd}")
-
-
-if __name__ == '__main__':
-    main()
