@@ -7,8 +7,10 @@ from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
 from src.tools.auditor.dimension_fetcher.api_gateway import APIGatewayDimensionFetcher
 from src.tools.auditor.dimension_fetcher.dynamo_db import DynamoDBDimensionFetcher
+from src.tools.auditor.dimension_fetcher.ec2 import EC2DimensionFetcher
 from src.tools.auditor.dimension_fetcher.lambda_ import LambdaDimensionFetcher
 from src.tools.auditor.dimension_fetcher.rds import RDSDimensionFetcher
+from src.tools.auditor.dimension_fetcher.route53 import Route53DimensionFetcher
 from src.tools.auditor.dimension_fetcher.s3 import S3DimensionFetcher
 
 
@@ -30,6 +32,8 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
         DimensionSupportedResource.Lambda: LambdaDimensionFetcher(aws),
         DimensionSupportedResource.S3: S3DimensionFetcher(aws),
         DimensionSupportedResource.APIGateway: APIGatewayDimensionFetcher(aws),
+        DimensionSupportedResource.Route53: Route53DimensionFetcher(aws),
+        DimensionSupportedResource.EC2: EC2DimensionFetcher(aws),
     }[res_enum]
     return dimension_fetcher
 
