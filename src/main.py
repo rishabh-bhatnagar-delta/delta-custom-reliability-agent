@@ -21,6 +21,8 @@ from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.route53 import get_route53_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
+from src.tools.audit_orchestrator import audit_by_block_code
+from src.tools.report_generator import generate_markdown_report
 
 _lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
 get_lambda_resilience_report = _lambda_module.get_lambda_resilience_report
@@ -149,6 +151,65 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["dimensions"],
             },
         ),
+        types.Tool(
+            name="resource_fetcher_by_block_code",
+            description=(
+                "Returns all CloudFormation stacks and their resources that belong to a specific block code. "
+                "Use this to audit all infrastructure owned by a particular team or application."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "block_code": {
+                        "type": "string",
+                        "description": "The block code tag value to filter stacks by (e.g. ITSSREMPSM).",
+                    },
+                    "force_refresh": {
+                        "type": "boolean",
+                        "description": "Bypass cache and fetch fresh data from AWS. Default: false.",
+                    },
+                },
+                "required": ["block_code"],
+            },
+        ),
+        types.Tool(
+            name="audit_by_block_code",
+            description=(
+                "Performs a full resilience audit for all infrastructure owned by a block code. "
+                "Fetches all stacks, gets dimensions for every supported resource, runs posture analysis, "
+                "and returns a detailed report with per-resource evidence, gaps, recommendations, "
+                "and an application-level summary with aggregated scores."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "block_code": {
+                        "type": "string",
+                        "description": "The block code to audit (e.g. ITSSREMPSM).",
+                    },
+                },
+                "required": ["block_code"],
+            },
+        ),
+        types.Tool(
+            name="generate_audit_report",
+            description=(
+                "Runs a full resilience audit for a block code and generates a detailed Markdown report "
+                "using AI. The report includes executive summary, per-resource analysis with evidence, "
+                "critical findings, cross-cutting observations, and a prioritized action plan. "
+                "Uses Bedrock agent for natural language generation, with a structured fallback."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "block_code": {
+                        "type": "string",
+                        "description": "The block code to audit and generate a report for.",
+                    },
+                },
+                "required": ["block_code"],
+            },
+        ),
     ]
 
 
@@ -273,13 +334,75 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
     raise ValueError(f"Unsupported resource type: {resource_type}")
 
 
+async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.TextContent]:
+    block_code = arguments.get("block_code")
+    force_refresh = arguments.get("force_refresh", False)
+    if not block_code:
+        raise MissingToolParam("Missing block_code")
+
+    logger.info(f"resource_fetcher_by_block_code: '{block_code}' (force_refresh={force_refresh})")
+
+    stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
+    matching_stacks = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
+
+    if not matching_stacks:
+        return _text(json.dumps({block_code: []}, indent=2))
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
+    async def _fetch(stack):
+        async with semaphore:
+            return await fetch_resources_in_stack(aws, stack.stack_name, force_refresh=force_refresh)
+
+    all_resources = await asyncio.gather(*(_fetch(s) for s in matching_stacks))
+
+    result = []
+    for stack, resources in zip(matching_stacks, all_resources):
+        stack_obj = CloudFormationStack(
+            stack_name=stack.stack_name,
+            stack_id=stack.stack_id,
+            block_code=stack.block_code,
+            resources=resources,
+        )
+        result.append(stack_obj.model_dump())
+
+    logger.info(f"resource_fetcher_by_block_code: '{block_code}' -> {len(result)} stack(s)")
+    return _text(json.dumps({block_code: result}, indent=2))
+
+
+async def _handle_audit_by_block_code(arguments: dict) -> list[types.TextContent]:
+    block_code = arguments.get("block_code")
+    if not block_code:
+        raise MissingToolParam("Missing block_code")
+
+    logger.info(f"audit_by_block_code: starting full audit for '{block_code}'")
+    report = await audit_by_block_code(aws, block_code, max_concurrency=MAX_CONCURRENCY)
+    logger.info(f"audit_by_block_code: completed for '{block_code}'")
+    return _text(json.dumps(report, indent=2))
+
+
+async def _handle_generate_audit_report(arguments: dict) -> list[types.TextContent]:
+    block_code = arguments.get("block_code")
+    if not block_code:
+        raise MissingToolParam("Missing block_code")
+
+    logger.info(f"generate_audit_report: starting for '{block_code}'")
+    audit_data = await audit_by_block_code(aws, block_code, max_concurrency=MAX_CONCURRENCY)
+    markdown = generate_markdown_report(audit_data)
+    logger.info(f"generate_audit_report: completed for '{block_code}'")
+    return _text(markdown)
+
+
 # --- Tool Router ---
 
 _TOOL_HANDLERS = {
     "resource_fetcher": _handle_resource_fetcher,
     "resource_fetcher_by_stacks": _handle_resource_fetcher_by_stacks,
+    "resource_fetcher_by_block_code": _handle_resource_fetcher_by_block_code,
     "get_resource_dimensions": _handle_get_resource_dimensions,
     "analyze_resilience": _handle_analyze_resilience,
+    "audit_by_block_code": _handle_audit_by_block_code,
+    "generate_audit_report": _handle_generate_audit_report,
 }
 
 
