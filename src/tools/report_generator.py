@@ -9,63 +9,38 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from src.core.prompts import REPORT_GENERATION_PROMPT
+
 logger = logging.getLogger(__name__)
 
-_REPORT_PROMPT = """You are an AWS reliability engineer generating a detailed resilience audit report in Markdown.
 
-You will receive a JSON audit of an application's AWS infrastructure identified by a block code.
-Generate a comprehensive Markdown report with the following structure:
-
-## Report Structure
-
-1. **Executive Summary** — 3-5 sentences covering overall posture, biggest risks, and top priority actions.
-
-2. **Application Overview** — block code, total stacks, total resources, how many were analyzed vs skipped.
-
-3. **Application Resilience Score** — the average score, the lowest score, and what they mean.
-
-4. **Critical Findings** — a table of all critical gaps with columns:
-   | Resource | Type | Stack | Finding | Status | Impact |
-
-5. **Resource-by-Resource Analysis** — for EACH analyzed resource:
-   - Resource name, type, stack
-   - Resilience score (X/10)
-   - **Evidence** (key dimensions that were checked — list the actual values found)
-   - **Gaps Found** (each gap with status and impact)
-   - **Recommendations** with CLI commands where available
-
-6. **Warning Findings** — lower severity gaps in a table.
-
-7. **Unsupported & Skipped Resources** — list what wasn't analyzed and why.
-
-8. **Prioritized Action Plan** — top 5 actions ranked by impact, with the specific CLI commands.
-
-9. **Cross-Cutting Observations** — patterns across resources (e.g., "multiple resources lack multi-AZ", "no backups across the board").
-
-Rules:
-- Use actual data from the JSON. Do not invent findings.
-- Include specific resource names, IDs, and values as evidence.
-- Every finding must reference the actual dimension value that triggered it.
-- Use tables for structured data.
-- Use code blocks for CLI commands.
-- Be specific, not generic. Say "RDS instance 'my-db' has BackupRetentionPeriod=0" not "backups should be enabled".
-
-Here is the audit JSON:
-
-"""
+def _save_report(markdown: str, block_code: str):
+    """Save report to local reports directory."""
+    from datetime import datetime
+    reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{block_code}_{timestamp}.md"
+    filepath = os.path.join(reports_dir, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(markdown)
+    logger.info(f"Report saved to {filepath}")
 
 
 def generate_markdown_report(audit_data: dict) -> str:
     """Send audit data to Bedrock agent and get back a markdown report."""
+    block_code = audit_data.get("application_summary", {}).get("block_code", "unknown")
     agent_id = os.getenv('BEDROCK_AGENT_ID')
     agent_alias_id = os.getenv('BEDROCK_AGENT_ALIAS_ID')
 
     if not agent_id or not agent_alias_id:
         logger.warning("Bedrock agent not configured, falling back to basic report")
-        return _fallback_report(audit_data)
+        report = _fallback_report(audit_data)
+        _save_report(report, block_code)
+        return report
 
     session_id = str(uuid.uuid4())
-    prompt = _REPORT_PROMPT + json.dumps(audit_data, indent=2)
+    prompt = REPORT_GENERATION_PROMPT + json.dumps(audit_data, indent=2)
 
     try:
         bedrock_profile = os.getenv('BEDROCK_AWS_PROFILE', os.getenv('AWS_PROFILE'))
@@ -88,11 +63,15 @@ def generate_markdown_report(audit_data: dict) -> str:
             if 'bytes' in chunk:
                 full_response += chunk['bytes'].decode('utf-8')
 
-        return full_response if full_response.strip() else _fallback_report(audit_data)
+        report = full_response if full_response.strip() else _fallback_report(audit_data)
+        _save_report(report, block_code)
+        return report
 
     except (ClientError, Exception) as e:
         logger.error(f"Bedrock report generation failed: {e}")
-        return _fallback_report(audit_data)
+        report = _fallback_report(audit_data)
+        _save_report(report, block_code)
+        return report
 
 
 def _fallback_report(audit_data: dict) -> str:
