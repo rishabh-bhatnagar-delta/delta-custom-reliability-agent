@@ -78,7 +78,7 @@ def get_rds_resilience_report(db_instance_id: str, dimensions: List[Dict[str, An
         )
 
     # 5. Read Replicas
-    replicas = dim_map.get("Read Replica IDs", [])
+    replicas = dim_map.get("ReadReplicaIDs", [])
     if not replicas:
         score -= 1
         gaps.append(ResilienceGap(
@@ -115,6 +115,55 @@ def get_rds_resilience_report(db_instance_id: str, dimensions: List[Dict[str, An
             impact="AWS chooses maintenance window; may conflict with peak traffic.",
         ))
         recommendations.append("Set a preferred maintenance window during low-traffic hours.")
+
+    # 8. Multi-AZ Cluster (readable standbys)
+    cluster_readers = dim_map.get("ClusterReaders", 0)
+    cluster_id = dim_map.get("ClusterIdentifier")
+    if cluster_id is not None:
+        if cluster_readers >= 2:
+            pass  # Active-Active for reads with Multi-AZ Cluster
+        elif cluster_readers == 1:
+            gaps.append(ResilienceGap(
+                name="Multi-AZ Cluster Readers",
+                status="1 READER",
+                impact="Single reader instance; read failover has limited capacity.",
+            ))
+            recommendations.append(
+                "Add a second reader to the cluster for Active-Active read capability."
+            )
+        elif cluster_readers == 0:
+            score -= 1
+            gaps.append(ResilienceGap(
+                name="Multi-AZ Cluster Readers",
+                status="NO READERS",
+                impact="Writer-only cluster; no read scaling or read failover.",
+            ))
+            recommendations.append("Add reader instances to the cluster.")
+
+    # 9. Global Database
+    global_cluster_id = dim_map.get("GlobalClusterIdentifier")
+    if not global_cluster_id:
+        if cluster_id is not None:
+            gaps.append(ResilienceGap(
+                name="Global Database",
+                status="NOT CONFIGURED",
+                impact="Cluster is region-locked; regional outage causes full database unavailability.",
+            ))
+            recommendations.append(
+                "Configure a Global Database for cross-region disaster recovery."
+            )
+    else:
+        # Check global cluster members
+        gc_members = dim_map.get("GlobalClusterMembers", [])
+        writers = [m for m in gc_members if m.get("IsWriter")]
+        secondaries = [m for m in gc_members if not m.get("IsWriter")]
+        if not secondaries:
+            gaps.append(ResilienceGap(
+                name="Global Database",
+                status="NO SECONDARY REGION",
+                impact="Global cluster exists but has no secondary region; no cross-region failover.",
+            ))
+            recommendations.append("Add a secondary region to the global database cluster.")
 
     score = max(0, min(10, score))
 

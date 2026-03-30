@@ -16,7 +16,9 @@ from src.models.resources import CloudFormationStack
 from src.tools.auditor.auditor import get_resource_dimensions
 from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear_cache
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
+from src.tools.posture_analyzer.ec2 import get_ec2_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
+from src.tools.posture_analyzer.route53 import get_route53_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
 
@@ -248,10 +250,15 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
         "Function": lambda name, dims: get_lambda_resilience_report(name, dims),
         "RDS": lambda name, dims: get_rds_resilience_report(name, dims),
         "DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
+        "DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
         "S3": lambda name, dims: get_s3_resilience_report(name, dims),
         "Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
         "DynamoDB": lambda name, dims: get_dynamodb_resilience_report(dims),
         "Table": lambda name, dims: get_dynamodb_resilience_report(dims),
+        "Route53": lambda name, dims: get_route53_resilience_report(name, dims),
+        "HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
+        "EC2": lambda name, dims: get_ec2_resilience_report(name, dims),
+        "Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
     }
 
     for key, analyzer in analyzers.items():
