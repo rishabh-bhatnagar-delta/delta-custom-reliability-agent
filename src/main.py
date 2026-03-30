@@ -248,17 +248,17 @@ async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]
         "RestApi": get_apigw_resilience_report,
         "Lambda": lambda name, dims: get_lambda_resilience_report(name, dims),
         "Function": lambda name, dims: get_lambda_resilience_report(name, dims),
-        "RDS": lambda name, dims: get_rds_resilience_report(name, dims),
         "DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
         "DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
+        "RDS": lambda name, dims: get_rds_resilience_report(name, dims),
         "S3": lambda name, dims: get_s3_resilience_report(name, dims),
         "Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
         "DynamoDB": lambda name, dims: get_dynamodb_resilience_report(dims),
         "Table": lambda name, dims: get_dynamodb_resilience_report(dims),
-        "Route53": lambda name, dims: get_route53_resilience_report(name, dims),
         "HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
+        "Route53": lambda name, dims: get_route53_resilience_report(name, dims),
+        "EC2::Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
         "EC2": lambda name, dims: get_ec2_resilience_report(name, dims),
-        "Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
     }
 
     for key, analyzer in analyzers.items():
