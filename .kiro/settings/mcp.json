@@ -6,9 +6,10 @@
       "autoApprove": [
         "resource_fetcher",
         "resource_fetcher_by_stacks",
-        "resource_fetcher",
         "get_resource_dimensions",
-        "analyze_resilience"
+        "analyze_resilience",
+        "resource_fetcher_by_block_code",
+        "generate_audit_report"
       ]
     }
   }
