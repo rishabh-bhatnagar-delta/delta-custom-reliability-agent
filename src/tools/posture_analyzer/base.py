@@ -19,7 +19,8 @@ class ResilienceAnalyzer:
         self.score = 10
 
     def dim(self, key: str, default=None):
-        return self.dim_map.get(key, default)
+        value = self.dim_map.get(key, default)
+        return value if value is not None else default
 
     def add_gap(self, name: str, status: str, impact: str, penalty: int = 0,
                 recommendation: str = None, cli: str = None):

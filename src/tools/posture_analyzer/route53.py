@@ -22,8 +22,10 @@ def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]
                    penalty=1, recommendation="Enable query logging to CloudWatch Logs for DNS observability.")
 
     # Routing analysis per record group
-    for group in a.dim("RoutingAnalysis", []):
-        _analyze_record_group(a, group)
+    routing_analysis = a.dim("RoutingAnalysis", [])
+    if routing_analysis:
+        for group in routing_analysis:
+            _analyze_record_group(a, group)
 
     # Health check coverage
     _analyze_health_checks(a)
@@ -33,7 +35,7 @@ def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]
 
 def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     name = group.get("Name", "")
-    records = group.get("Records", [])
+    records = group.get("Records") or []
 
     if group.get("RecordCount", 0) <= 1:
         rs = records[0] if records else {}
@@ -74,14 +76,15 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
 
 
 def _analyze_health_checks(a: ResilienceAnalyzer):
-    disabled_hcs = [hc for hc in a.dim("HealthChecks", []) if hc.get("Disabled")]
+    health_checks = a.dim("HealthChecks") or []
+    disabled_hcs = [hc for hc in health_checks if isinstance(hc, dict) and hc.get("Disabled")]
     if disabled_hcs:
         a.add_gap("Disabled Health Checks", f"{len(disabled_hcs)} DISABLED",
                    "Disabled health checks provide no failure detection.",
                    penalty=1, recommendation="Re-enable or remove disabled health checks.")
 
-    total_records = a.dim("TotalUserRecords", 0)
-    if total_records > 0 and a.dim("RecordsWithHealthChecks", 0) == 0:
+    total_records = a.dim("TotalUserRecords", 0) or 0
+    if total_records > 0 and (a.dim("RecordsWithHealthChecks", 0) or 0) == 0:
         a.add_gap("Health Check Coverage", "NONE",
                    "No records have health checks; Route 53 cannot detect endpoint failures.",
                    penalty=1, recommendation="Attach health checks to critical records for automated failure detection.")
