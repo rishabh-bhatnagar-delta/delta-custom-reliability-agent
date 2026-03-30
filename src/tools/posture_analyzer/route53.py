@@ -1,163 +1,87 @@
 from typing import List, Dict, Any
 
-from src.models.resiliency_report import (
-    ResourceResilienceOutput,
-    ResiliencyReport,
-    ResilienceGap,
-)
+from src.models.resiliency_report import ResourceResilienceOutput
+from src.tools.posture_analyzer.base import ResilienceAnalyzer
 
 
 def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
     """Rule-based resilience evaluation for Route 53 hosted zones."""
-    dim_map = {d["name"]: d.get("value") for d in dimensions}
+    a = ResilienceAnalyzer(zone_id, dimensions)
 
-    gaps: List[ResilienceGap] = []
-    recommendations: List[str] = []
-    cli_commands: List[str] = []
-    score = 10
+    # DNSSEC
+    if not a.dim("DNSSEC", False):
+        a.add_gap("DNSSEC", "DISABLED",
+                   "DNS responses are not cryptographically signed; vulnerable to spoofing.",
+                   penalty=1, recommendation="Enable DNSSEC signing for the hosted zone.",
+                   cli=f"aws route53 enable-hosted-zone-dnssec --hosted-zone-id {zone_id}")
 
-    # 1. DNSSEC
-    if not dim_map.get("DNSSEC", False):
-        score -= 1
-        gaps.append(ResilienceGap(
-            name="DNSSEC",
-            status="DISABLED",
-            impact="DNS responses are not cryptographically signed; vulnerable to spoofing.",
-        ))
-        recommendations.append("Enable DNSSEC signing for the hosted zone.")
-        cli_commands.append(
-            f"aws route53 enable-hosted-zone-dnssec --hosted-zone-id {zone_id}"
-        )
+    # Query Logging
+    if not a.dim("QueryLogging", False):
+        a.add_gap("Query Logging", "NOT CONFIGURED",
+                   "No visibility into DNS query patterns; harder to diagnose issues.",
+                   penalty=1, recommendation="Enable query logging to CloudWatch Logs for DNS observability.")
 
-    # 2. Query Logging
-    if not dim_map.get("QueryLogging", False):
-        score -= 1
-        gaps.append(ResilienceGap(
-            name="Query Logging",
-            status="NOT CONFIGURED",
-            impact="No visibility into DNS query patterns; harder to diagnose issues.",
-        ))
-        recommendations.append("Enable query logging to CloudWatch Logs for DNS observability.")
+    # Routing analysis per record group
+    for group in a.dim("RoutingAnalysis", []):
+        _analyze_record_group(a, group)
 
-    # 3. Routing analysis — posture determination per record group
-    routing_analysis = dim_map.get("RoutingAnalysis", [])
-    for group in routing_analysis:
-        name = group.get("Name", "")
-        records = group.get("Records", [])
-        record_count = group.get("RecordCount", 0)
+    # Health check coverage
+    _analyze_health_checks(a)
 
-        if record_count <= 1:
-            # Single record — siloed unless it's an alias
-            rs = records[0] if records else {}
-            if not rs.get("AliasTarget"):
-                gaps.append(ResilienceGap(
-                    name=f"Record: {name}",
-                    status="SILOED",
-                    impact="Single record with no routing policy; no failover capability.",
-                ))
-                recommendations.append(
-                    f"Record '{name}' is siloed. Consider adding failover or weighted routing."
-                )
-                score -= 1
-            continue
+    return a.build(f"Route 53 zone '{zone_id}'")
 
-        # Multiple records — determine routing policy
-        has_failover = any(r.get("Failover") for r in records)
-        has_weight = any(r.get("Weight") is not None for r in records)
-        has_multivalue = any(r.get("MultiValueAnswer") for r in records)
 
-        if has_failover:
-            # Active-Passive — check edge cases
-            primary = [r for r in records if r.get("Failover") == "PRIMARY"]
-            if primary and not primary[0].get("HealthCheckId"):
-                score -= 2
-                gaps.append(ResilienceGap(
-                    name=f"Failover: {name}",
-                    status="PRIMARY HAS NO HEALTH CHECK",
-                    impact="SECONDARY will never activate; failover is non-functional.",
-                ))
-                recommendations.append(
-                    f"Attach a health check to the PRIMARY record for '{name}'. "
-                    f"Without it, the SECONDARY record will never be used."
-                )
-            for r in records:
-                if not r.get("HealthCheckId"):
-                    gaps.append(ResilienceGap(
-                        name=f"Failover Record: {name} ({r.get('Failover', 'UNKNOWN')})",
-                        status="NO HEALTH CHECK",
-                        impact="Record is static; Route 53 cannot detect failures.",
-                    ))
+def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
+    name = group.get("Name", "")
+    records = group.get("Records", [])
 
-        elif has_weight:
-            weights = [r.get("Weight", 0) for r in records]
-            non_zero = [w for w in weights if w > 0]
-            if len(non_zero) == 1 and 0 in weights:
-                # Manual Active-Passive
-                gaps.append(ResilienceGap(
-                    name=f"Weighted: {name}",
-                    status="MANUAL ACTIVE-PASSIVE",
-                    impact="One record has weight 0; traffic only flows to one endpoint. Manual failover required.",
-                ))
-                recommendations.append(
-                    f"Weighted record '{name}' has a weight-0 record. "
-                    f"This is manual active-passive. Consider using failover routing instead."
-                )
+    if group.get("RecordCount", 0) <= 1:
+        rs = records[0] if records else {}
+        if not rs.get("AliasTarget"):
+            a.add_gap(f"Record: {name}", "SILOED",
+                       "Single record with no routing policy; no failover capability.",
+                       penalty=1, recommendation=f"Record '{name}' is siloed. Consider adding failover or weighted routing.")
+        return
 
-        elif has_multivalue:
-            missing_hc = [r for r in records if not r.get("HealthCheckId")]
-            if missing_hc:
-                score -= 1
-                gaps.append(ResilienceGap(
-                    name=f"Multivalue: {name}",
-                    status="UNHEALTHY-BLIND",
-                    impact="Multivalue records without health checks serve traffic to unhealthy endpoints.",
-                ))
-                recommendations.append(
-                    f"Attach health checks to all multivalue records for '{name}'. "
-                    f"Without them, Route 53 cannot filter unhealthy endpoints."
-                )
+    has_failover = any(r.get("Failover") for r in records)
+    has_weight = any(r.get("Weight") is not None for r in records)
+    has_multivalue = any(r.get("MultiValueAnswer") for r in records)
 
-    # 4. Health checks
-    health_checks = dim_map.get("HealthChecks", [])
-    disabled_hcs = [hc for hc in health_checks if hc.get("Disabled")]
+    if has_failover:
+        primary = [r for r in records if r.get("Failover") == "PRIMARY"]
+        if primary and not primary[0].get("HealthCheckId"):
+            a.add_gap(f"Failover: {name}", "PRIMARY HAS NO HEALTH CHECK",
+                       "SECONDARY will never activate; failover is non-functional.",
+                       penalty=2, recommendation=f"Attach a health check to the PRIMARY record for '{name}'. Without it, the SECONDARY record will never be used.")
+        for r in records:
+            if not r.get("HealthCheckId"):
+                a.add_gap(f"Failover Record: {name} ({r.get('Failover', 'UNKNOWN')})", "NO HEALTH CHECK",
+                           "Record is static; Route 53 cannot detect failures.")
+
+    elif has_weight:
+        weights = [r.get("Weight", 0) for r in records]
+        non_zero = [w for w in weights if w > 0]
+        if len(non_zero) == 1 and 0 in weights:
+            a.add_gap(f"Weighted: {name}", "MANUAL ACTIVE-PASSIVE",
+                       "One record has weight 0; traffic only flows to one endpoint. Manual failover required.",
+                       recommendation=f"Weighted record '{name}' has a weight-0 record. Consider using failover routing instead.")
+
+    elif has_multivalue:
+        if any(not r.get("HealthCheckId") for r in records):
+            a.add_gap(f"Multivalue: {name}", "UNHEALTHY-BLIND",
+                       "Multivalue records without health checks serve traffic to unhealthy endpoints.",
+                       penalty=1, recommendation=f"Attach health checks to all multivalue records for '{name}'.")
+
+
+def _analyze_health_checks(a: ResilienceAnalyzer):
+    disabled_hcs = [hc for hc in a.dim("HealthChecks", []) if hc.get("Disabled")]
     if disabled_hcs:
-        score -= 1
-        gaps.append(ResilienceGap(
-            name="Disabled Health Checks",
-            status=f"{len(disabled_hcs)} DISABLED",
-            impact="Disabled health checks provide no failure detection.",
-        ))
-        recommendations.append("Re-enable or remove disabled health checks.")
+        a.add_gap("Disabled Health Checks", f"{len(disabled_hcs)} DISABLED",
+                   "Disabled health checks provide no failure detection.",
+                   penalty=1, recommendation="Re-enable or remove disabled health checks.")
 
-    records_with_hc = dim_map.get("RecordsWithHealthChecks", 0)
-    total_records = dim_map.get("TotalUserRecords", 0)
-    if total_records > 0 and records_with_hc == 0:
-        score -= 1
-        gaps.append(ResilienceGap(
-            name="Health Check Coverage",
-            status="NONE",
-            impact="No records have health checks; Route 53 cannot detect endpoint failures.",
-        ))
-        recommendations.append("Attach health checks to critical records for automated failure detection.")
-
-    score = max(0, min(10, score))
-
-    total_issues = len(gaps)
-    if score >= 8:
-        summary = f"Route 53 zone '{zone_id}' has a strong reliability posture with {total_issues} minor gap(s)."
-    elif score >= 5:
-        summary = f"Route 53 zone '{zone_id}' has moderate reliability risks. {total_issues} gap(s) need attention."
-    else:
-        summary = f"Route 53 zone '{zone_id}' has significant reliability gaps. {total_issues} issue(s) require remediation."
-
-    return ResourceResilienceOutput(
-        recommendations=recommendations,
-        aws_commands_to_fix=cli_commands,
-        report=ResiliencyReport(
-            resource_name=zone_id,
-            resilience_gaps=gaps,
-            overall_resilience_score=score,
-            max_resilience_score=10,
-            summary=summary,
-        ),
-    )
+    total_records = a.dim("TotalUserRecords", 0)
+    if total_records > 0 and a.dim("RecordsWithHealthChecks", 0) == 0:
+        a.add_gap("Health Check Coverage", "NONE",
+                   "No records have health checks; Route 53 cannot detect endpoint failures.",
+                   penalty=1, recommendation="Attach health checks to critical records for automated failure detection.")
