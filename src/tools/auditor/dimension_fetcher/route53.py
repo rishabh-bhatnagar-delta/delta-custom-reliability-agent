@@ -48,13 +48,16 @@ class Route53DimensionFetcher(DimensionFetcher):
         except ClientError:
             dimensions.append(DimensionOutput(name='QueryLogging', value=False))
 
-        # Record analysis: health checks, failover details
+        # Record analysis: group by name, detect routing policies, determine AA/AP posture
         try:
             record_sets = route53_client.list_resource_record_sets(HostedZoneId=physical_id)
             records_with_health_checks = 0
             total_records = 0
-            failover_records = []
             health_check_ids = set()
+
+            # Group records by (Name, Type) to detect shared-name routing
+            from collections import defaultdict
+            record_groups = defaultdict(list)
 
             for rs in record_sets.get('ResourceRecordSets', []):
                 if rs.get('Type') in ('SOA', 'NS'):
@@ -66,24 +69,44 @@ class Route53DimensionFetcher(DimensionFetcher):
                     records_with_health_checks += 1
                     health_check_ids.add(hc_id)
 
-                if rs.get('Failover'):
-                    failover_records.append({
-                        'Name': rs.get('Name'),
-                        'Type': rs.get('Type'),
-                        'Failover': rs.get('Failover'),
-                        'SetIdentifier': rs.get('SetIdentifier'),
-                        'HealthCheckId': hc_id,
-                        'TTL': rs.get('TTL'),
-                        'AliasTarget': rs.get('AliasTarget'),
-                    })
+                key = (rs.get('Name'), rs.get('Type'))
+                record_groups[key].append(rs)
 
             dimensions.append(DimensionOutput(name='RecordsWithHealthChecks', value=records_with_health_checks))
             dimensions.append(DimensionOutput(name='TotalUserRecords', value=total_records))
-            dimensions.append(DimensionOutput(name='FailoverRecords', value=failover_records))
+
+            # Analyze each record group for routing
+            routing_analysis = []
+            for (name, rtype), records in record_groups.items():
+                group_info = {
+                    'Name': name,
+                    'Type': rtype,
+                    'RecordCount': len(records),
+                    'Records': [],
+                }
+
+                for r in records:
+                    group_info['Records'].append({
+                        'SetIdentifier': r.get('SetIdentifier'),
+                        'Failover': r.get('Failover'),
+                        'Weight': r.get('Weight'),
+                        'MultiValueAnswer': r.get('MultiValueAnswer'),
+                        'Region': r.get('Region'),
+                        'GeoLocation': r.get('GeoLocation'),
+                        'HealthCheckId': r.get('HealthCheckId'),
+                        'TTL': r.get('TTL'),
+                        'AliasTarget': r.get('AliasTarget'),
+                        'ResourceRecords': [rr.get('Value') for rr in r.get('ResourceRecords', [])],
+                    })
+
+                routing_analysis.append(group_info)
+
+            dimensions.append(DimensionOutput(name='RoutingAnalysis', value=routing_analysis))
+
         except ClientError:
             dimensions.append(DimensionOutput(name='RecordsWithHealthChecks', value=0))
             dimensions.append(DimensionOutput(name='TotalUserRecords', value=0))
-            dimensions.append(DimensionOutput(name='FailoverRecords', value=[]))
+            dimensions.append(DimensionOutput(name='RoutingAnalysis', value=[]))
             health_check_ids = set()
 
         # Health check details
@@ -93,6 +116,17 @@ class Route53DimensionFetcher(DimensionFetcher):
                 hc_resp = route53_client.get_health_check(HealthCheckId=hc_id)
                 hc = hc_resp.get('HealthCheck', {})
                 config = hc.get('HealthCheckConfig', {})
+                # Get current health status
+                try:
+                    status_resp = route53_client.get_health_check_status(HealthCheckId=hc_id)
+                    checkers = status_resp.get('HealthCheckObservations', [])
+                    statuses = [c.get('StatusReport', {}).get('Status', '') for c in checkers]
+                    healthy_count = sum(1 for s in statuses if 'Success' in s)
+                    total_checkers = len(statuses)
+                except ClientError:
+                    healthy_count = None
+                    total_checkers = None
+
                 health_checks.append({
                     'Id': hc.get('Id'),
                     'Type': config.get('Type'),
@@ -108,6 +142,8 @@ class Route53DimensionFetcher(DimensionFetcher):
                     'EnableSNI': config.get('EnableSNI', False),
                     'Regions': config.get('Regions', []),
                     'InsufficientDataHealthStatus': config.get('InsufficientDataHealthStatus'),
+                    'HealthyCheckers': healthy_count,
+                    'TotalCheckers': total_checkers,
                 })
         except ClientError:
             pass

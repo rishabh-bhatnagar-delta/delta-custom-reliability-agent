@@ -92,15 +92,74 @@ class EC2DimensionFetcher(DimensionFetcher):
                for sg in instance.get('SecurityGroups', [])]
         dimensions.append(DimensionOutput(name='SecurityGroups', value=sgs))
 
-        # Auto Scaling Group membership
+        # Auto Scaling Group membership + raw data
         asg_client = self.get_aws_client_provider().get_client_by_service_name('autoscaling')
+        elbv2_client = self.get_aws_client_provider().get_client_by_service_name('elbv2')
+        asg_name = None
+        asg_detail = None
         try:
             asg_resp = asg_client.describe_auto_scaling_instances(InstanceIds=[physical_id])
             asg_instances = asg_resp.get('AutoScalingInstances', [])
-            asg_name = asg_instances[0].get('AutoScalingGroupName') if asg_instances else None
-            dimensions.append(DimensionOutput(name='AutoScalingGroup', value=asg_name))
+            if asg_instances:
+                asg_name = asg_instances[0].get('AutoScalingGroupName')
+                # Fetch full ASG details
+                asg_desc = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+                asg_groups = asg_desc.get('AutoScalingGroups', [])
+                if asg_groups:
+                    asg = asg_groups[0]
+                    target_group_arns = asg.get('TargetGroupARNs', [])
+
+                    # Target group health (raw data)
+                    target_group_details = []
+                    if target_group_arns:
+                        try:
+                            tg_resp = elbv2_client.describe_target_health(TargetGroupArn=target_group_arns[0])
+                            for th in tg_resp.get('TargetHealthDescriptions', []):
+                                target_group_details.append({
+                                    'TargetId': th.get('Target', {}).get('Id'),
+                                    'HealthState': th.get('TargetHealth', {}).get('State'),
+                                })
+                        except ClientError:
+                            pass
+
+                    asg_detail = {
+                        'Name': asg_name,
+                        'MinSize': asg.get('MinSize', 0),
+                        'MaxSize': asg.get('MaxSize', 0),
+                        'DesiredCapacity': asg.get('DesiredCapacity', 0),
+                        'InstanceCount': len(asg.get('Instances', [])),
+                        'AvailabilityZones': asg.get('AvailabilityZones', []),
+                        'TargetGroupARNs': target_group_arns,
+                        'TargetGroupHealth': target_group_details,
+                    }
         except ClientError:
-            dimensions.append(DimensionOutput(name='AutoScalingGroup', value=None))
+            pass
+
+        dimensions.append(DimensionOutput(name='AutoScalingGroup', value=asg_name))
+        dimensions.append(DimensionOutput(name='ASGDetail', value=asg_detail))
+
+        # If no ASG, check if instance is directly in a target group
+        if not asg_name:
+            try:
+                tg_resp = elbv2_client.describe_target_groups()
+                instance_target_groups = []
+                for tg in tg_resp.get('TargetGroups', []):
+                    try:
+                        health_resp = elbv2_client.describe_target_health(TargetGroupArn=tg['TargetGroupArn'])
+                        for th in health_resp.get('TargetHealthDescriptions', []):
+                            if th.get('Target', {}).get('Id') == physical_id:
+                                instance_target_groups.append({
+                                    'TargetGroupArn': tg['TargetGroupArn'],
+                                    'TargetGroupName': tg.get('TargetGroupName'),
+                                    'HealthState': th.get('TargetHealth', {}).get('State'),
+                                })
+                    except ClientError:
+                        continue
+                dimensions.append(DimensionOutput(name='DirectTargetGroups', value=instance_target_groups))
+            except ClientError:
+                dimensions.append(DimensionOutput(name='DirectTargetGroups', value=[]))
+        else:
+            dimensions.append(DimensionOutput(name='DirectTargetGroups', value=[]))
 
         # Backup (AWS Backup recovery points)
         backup_client = self.get_aws_client_provider().get_client_by_service_name('backup')
