@@ -8,11 +8,62 @@ def get_rds_resilience_report(db_instance_id: str, dimensions: List[Dict[str, An
     """Rule-based resilience evaluation for RDS."""
     a = ResilienceAnalyzer(db_instance_id, dimensions)
 
+    _classify_failover_config(a)
     _analyze_instance(a, db_instance_id)
     _analyze_cluster(a)
     _analyze_global_db(a)
 
     return a.build(f"RDS '{db_instance_id}'")
+
+
+def _classify_failover_config(a: ResilienceAnalyzer):
+    """
+    Classify RDS failover configuration.
+
+    Logic:
+    ┌─ Global Database with secondary region?
+    │   └─ ACTIVE-ACTIVE: cross-region replication with failover capability.
+    │
+    ├─ Aurora cluster with >=2 readers + Multi-AZ?
+    │   └─ ACTIVE-ACTIVE: multiple readers actively serving traffic across AZs.
+    │
+    ├─ Multi-AZ enabled (standalone or cluster)?
+    │   └─ ACTIVE-PASSIVE: synchronous standby in another AZ, doesn't serve traffic.
+    │
+    ├─ Read replicas but no Multi-AZ?
+    │   └─ ACTIVE-PASSIVE: replicas serve reads but writer failover requires manual promotion.
+    │
+    └─ Single instance, no Multi-AZ, no replicas?
+        └─ SILOED: single point of failure.
+    """
+    gc_members = a.dim("GlobalClusterMembers", [])
+    has_secondary_region = any(not m.get("IsWriter") for m in gc_members) if gc_members else False
+
+    cluster_id = a.dim("ClusterIdentifier")
+    cluster_readers = a.dim("ClusterReaders", 0)
+    multi_az = a.dim("MultiAZ", False)
+    read_replicas = a.dim("ReadReplicaIDs", [])
+
+    if has_secondary_region:
+        a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
+                   "Global Database with secondary region; cross-region replication and failover available.",
+                   penalty=0)
+    elif cluster_id and cluster_readers >= 2 and multi_az:
+        a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
+                   "Aurora cluster with multiple readers across AZs; reads distributed, writer fails over automatically.",
+                   penalty=0)
+    elif multi_az:
+        a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
+                   "Multi-AZ enabled; synchronous standby in another AZ with automatic failover. Standby does not serve traffic.",
+                   penalty=0)
+    elif read_replicas:
+        a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
+                   "Read replicas exist but no Multi-AZ; replicas serve reads but writer failover requires manual promotion.",
+                   penalty=0)
+    else:
+        a.add_gap("Failover Configuration", "SILOED",
+                   "Single instance with no Multi-AZ and no replicas; single point of failure.",
+                   penalty=0)
 
 
 def _analyze_instance(a: ResilienceAnalyzer, db_id: str):

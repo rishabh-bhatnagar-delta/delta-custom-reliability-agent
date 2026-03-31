@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.core.aws_client import AWSClientProvider
 from src.core.constants import CACHE_TTL_MINUTES
+from src.core import file_cache
 from src.models.resources import CloudFormationStack, StackResource, StackSummary
 
 # Initialize logger for internal tracking
@@ -18,30 +19,45 @@ _stacks_cache: Dict[str, Tuple[List[StackSummary], float]] = {}
 
 
 def _get_cached_resources(stack_name: str) -> Optional[List[StackResource]]:
-    """Return cached resources if still valid, else None."""
+    """Return cached resources if still valid (memory first, then file), else None."""
     if stack_name in _resource_cache:
         resources, ts = _resource_cache[stack_name]
         if time.time() - ts < _CACHE_TTL:
             return resources
         del _resource_cache[stack_name]
+
+    # Fall back to file cache
+    cached = file_cache.get("resources", stack_name)
+    if cached is not None:
+        resources = [StackResource(**r) for r in cached]
+        _resource_cache[stack_name] = (resources, time.time())
+        return resources
     return None
 
 
 def _get_cached_stacks(region: str) -> Optional[List[StackSummary]]:
-    """Return cached stacks list for a region if still valid, else None."""
+    """Return cached stacks list for a region if still valid (memory first, then file), else None."""
     if region in _stacks_cache:
         stacks, ts = _stacks_cache[region]
         if time.time() - ts < _CACHE_TTL:
             return stacks
         del _stacks_cache[region]
+
+    # Fall back to file cache
+    cached = file_cache.get("stacks", region)
+    if cached is not None:
+        stacks = [StackSummary(**s) for s in cached]
+        _stacks_cache[region] = (stacks, time.time())
+        return stacks
     return None
 
 
 def clear_cache():
-    """Clear all cached data."""
+    """Clear all cached data (memory and file)."""
     _resource_cache.clear()
     _stacks_cache.clear()
-    logger.info("cache: cleared all cached stacks and resources")
+    file_cache.clear()
+    logger.info("cache: cleared all cached stacks and resources (memory + file)")
 
 
 async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool = False) -> List[StackSummary]:
@@ -80,6 +96,7 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
                     region=region,
                 ))
         _stacks_cache[region] = (stacks, time.time())
+        file_cache.put("stacks", region, [s.model_dump() for s in stacks])
         logger.info(f"fetch_only_stacks: {region} found {len(stacks)} active stack(s), cached")
         return stacks
     except Exception as e:
@@ -114,6 +131,7 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     status=res['ResourceStatus']
                 ))
         _resource_cache[stack_name] = (resources, time.time())
+        file_cache.put("resources", stack_name, [r.model_dump() for r in resources])
         logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(resources)} resource(s), cached")
         return resources
     except Exception as e:

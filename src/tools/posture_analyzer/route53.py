@@ -33,21 +33,67 @@ def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]
     return a.build(f"Route 53 zone '{zone_id}'")
 
 
+def _classify_routing(records: list) -> str:
+    """Classify a record group's HA pattern: ACTIVE-ACTIVE, ACTIVE-PASSIVE, or SILOED."""
+    if len(records) <= 1:
+        return "SILOED"
+
+    has_failover = any(r.get("Failover") for r in records)
+    has_weight = any(r.get("Weight") is not None for r in records)
+    has_multivalue = any(r.get("MultiValueAnswer") for r in records)
+    has_latency = any(r.get("Region") for r in records)
+    has_geo = any(r.get("GeoLocation") for r in records)
+
+    if has_failover:
+        return "ACTIVE-PASSIVE"
+
+    if has_weight:
+        weights = [r.get("Weight", 0) for r in records]
+        non_zero = [w for w in weights if w > 0]
+        if len(non_zero) <= 1 and 0 in weights:
+            return "ACTIVE-PASSIVE"
+        return "ACTIVE-ACTIVE"
+
+    if has_latency or has_geo or has_multivalue:
+        return "ACTIVE-ACTIVE"
+
+    return "SILOED"
+
+
 def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     name = group.get("Name", "")
     records = group.get("Records") or []
+    classification = _classify_routing(records)
 
-    if group.get("RecordCount", 0) <= 1:
+    # --- SILOED ---
+    if classification == "SILOED":
         rs = records[0] if records else {}
-        if not rs.get("AliasTarget"):
+        if rs.get("AliasTarget"):
+            a.add_gap(f"Record: {name}", "SILOED (ALIAS)",
+                       "Single alias record; HA depends on the target resource configuration.",
+                       penalty=0)
+        else:
             a.add_gap(f"Record: {name}", "SILOED",
                        "Single record with no routing policy; no failover capability.",
                        penalty=1, recommendation=f"Record '{name}' is siloed. Consider adding failover or weighted routing.")
         return
 
+    # --- Emit HA classification ---
+    if classification == "ACTIVE-PASSIVE":
+        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-PASSIVE",
+                   "Traffic is routed to a primary endpoint; a standby takes over on failure.",
+                   penalty=0)
+    else:
+        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-ACTIVE",
+                   "Traffic is distributed across multiple healthy endpoints.",
+                   penalty=0)
+
+    # --- Policy-specific gap checks ---
     has_failover = any(r.get("Failover") for r in records)
     has_weight = any(r.get("Weight") is not None for r in records)
     has_multivalue = any(r.get("MultiValueAnswer") for r in records)
+    has_latency = any(r.get("Region") for r in records)
+    has_geo = any(r.get("GeoLocation") for r in records)
 
     if has_failover:
         primary = [r for r in records if r.get("Failover") == "PRIMARY"]
@@ -63,10 +109,36 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     elif has_weight:
         weights = [r.get("Weight", 0) for r in records]
         non_zero = [w for w in weights if w > 0]
-        if len(non_zero) == 1 and 0 in weights:
+        if len(non_zero) <= 1 and 0 in weights:
             a.add_gap(f"Weighted: {name}", "MANUAL ACTIVE-PASSIVE",
                        "One record has weight 0; traffic only flows to one endpoint. Manual failover required.",
                        recommendation=f"Weighted record '{name}' has a weight-0 record. Consider using failover routing instead.")
+        if len(non_zero) > 1 and any(not r.get("HealthCheckId") for r in records):
+            a.add_gap(f"Weighted AA: {name}", "MISSING HEALTH CHECKS",
+                       "Active-Active weighted records without health checks will route traffic to unhealthy endpoints.",
+                       penalty=1, recommendation=f"Attach health checks to all weighted records for '{name}' to enable automatic unhealthy-endpoint removal.")
+
+    elif has_latency:
+        regions = [r.get("Region") for r in records if r.get("Region")]
+        if len(set(regions)) < 2:
+            a.add_gap(f"Latency: {name}", "SINGLE REGION",
+                       "Latency-based routing with only one region provides no cross-region failover.",
+                       penalty=1, recommendation=f"Add records in additional regions for '{name}' to enable cross-region latency-based routing.")
+        if any(not r.get("HealthCheckId") for r in records):
+            a.add_gap(f"Latency: {name}", "MISSING HEALTH CHECKS",
+                       "Latency-based records without health checks will route to unhealthy regional endpoints.",
+                       penalty=1, recommendation=f"Attach health checks to all latency-based records for '{name}'.")
+
+    elif has_geo:
+        has_default = any(r.get("GeoLocation", {}).get("CountryCode") == "*" for r in records)
+        if not has_default:
+            a.add_gap(f"Geolocation: {name}", "NO DEFAULT RECORD",
+                       "Queries from unmapped locations will get NXDOMAIN (no answer).",
+                       penalty=2, recommendation=f"Add a default geolocation record (CountryCode='*') for '{name}' to handle queries from unmapped locations.")
+        if any(not r.get("HealthCheckId") for r in records):
+            a.add_gap(f"Geolocation: {name}", "MISSING HEALTH CHECKS",
+                       "Geolocation records without health checks will route to unhealthy endpoints in that region.",
+                       penalty=1, recommendation=f"Attach health checks to all geolocation records for '{name}'.")
 
     elif has_multivalue:
         if any(not r.get("HealthCheckId") for r in records):
