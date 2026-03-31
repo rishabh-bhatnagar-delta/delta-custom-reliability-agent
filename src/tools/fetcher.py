@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # TTL cache: {stack_name: (resources, timestamp)}
 _CACHE_TTL = CACHE_TTL_MINUTES * 60
 _resource_cache: Dict[str, Tuple[List[StackResource], float]] = {}
-_stacks_cache: Optional[Tuple[List[StackSummary], float]] = None
+_stacks_cache: Dict[str, Tuple[List[StackSummary], float]] = {}
 
 
 def _get_cached_resources(stack_name: str) -> Optional[List[StackResource]]:
@@ -27,38 +27,36 @@ def _get_cached_resources(stack_name: str) -> Optional[List[StackResource]]:
     return None
 
 
-def _get_cached_stacks() -> Optional[List[StackSummary]]:
-    """Return cached stacks list if still valid, else None."""
-    global _stacks_cache
-    if _stacks_cache is not None:
-        stacks, ts = _stacks_cache
+def _get_cached_stacks(region: str) -> Optional[List[StackSummary]]:
+    """Return cached stacks list for a region if still valid, else None."""
+    if region in _stacks_cache:
+        stacks, ts = _stacks_cache[region]
         if time.time() - ts < _CACHE_TTL:
             return stacks
-        _stacks_cache = None
+        del _stacks_cache[region]
     return None
 
 
 def clear_cache():
     """Clear all cached data."""
-    global _stacks_cache
     _resource_cache.clear()
-    _stacks_cache = None
+    _stacks_cache.clear()
     logger.info("cache: cleared all cached stacks and resources")
 
 
 async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool = False) -> List[StackSummary]:
     """
-    Fetches basic metadata (Name, ID, blockCode tag) for all active stacks.
+    Fetches basic metadata (Name, ID, blockCode tag) for all active stacks in the provider's region.
     """
-    global _stacks_cache
+    region = aws_provider.region
 
     if not force_refresh:
-        cached = _get_cached_stacks()
+        cached = _get_cached_stacks(region)
         if cached is not None:
-            logger.info(f"fetch_only_stacks: returning {len(cached)} stack(s) from cache")
+            logger.info(f"fetch_only_stacks: {region} returning {len(cached)} stack(s) from cache")
             return cached
 
-    logger.info("fetch_only_stacks: scanning CloudFormation stacks")
+    logger.info(f"fetch_only_stacks: scanning CloudFormation stacks in {region}")
     client = aws_provider.get_cft_client()
     active_statuses = [
         'CREATE_COMPLETE', 'ROLLBACK_COMPLETE',
@@ -79,10 +77,10 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
                     stack_name=stack['StackName'],
                     stack_id=stack['StackId'],
                     block_code=tags.get('blockCode'),
-                    region=aws_provider.region,
+                    region=region,
                 ))
-        _stacks_cache = (stacks, time.time())
-        logger.info(f"fetch_only_stacks: found {len(stacks)} active stack(s), cached")
+        _stacks_cache[region] = (stacks, time.time())
+        logger.info(f"fetch_only_stacks: {region} found {len(stacks)} active stack(s), cached")
         return stacks
     except Exception as e:
         logger.error(f"fetch_only_stacks: failed - {e}", exc_info=True)
