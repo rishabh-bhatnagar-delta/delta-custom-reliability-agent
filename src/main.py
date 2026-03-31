@@ -220,6 +220,14 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
     if force_refresh:
         clear_cache()
 
+    # Check file cache for the full grouped result first
+    from src.core import file_cache as _fc
+    if not force_refresh:
+        cached_result = _fc.get("results", "resource_fetcher_all")
+        if cached_result is not None:
+            logger.info("resource_fetcher: returning full result from file cache")
+            return _text(json.dumps(cached_result, indent=2))
+
     logger.info(f"resource_fetcher: starting across {US_REGIONS} (force_refresh={force_refresh})")
     stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
     total = len(stacks_list)
@@ -249,6 +257,9 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
         )
         grouped[stack.block_code or "untagged"].append(stack_obj.model_dump())
 
+    # Cache the full grouped result to file
+    _fc.put("results", "resource_fetcher_all", dict(grouped))
+
     return _text(json.dumps(grouped, indent=2))
 
 
@@ -258,6 +269,13 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
     force_refresh = arguments.get("force_refresh", False)
     if not stack_name:
         raise MissingToolParam("Missing stack_name")
+
+    from src.core import file_cache as _fc
+    if not force_refresh:
+        cached_result = _fc.get("results", f"stack_{stack_name}")
+        if cached_result is not None:
+            logger.info(f"resource_fetcher_by_stacks: returning '{stack_name}' from file cache")
+            return _text(json.dumps(cached_result, indent=2))
 
     logger.info(f"resource_fetcher_by_stacks: '{stack_name}' across {US_REGIONS}")
 
@@ -278,7 +296,9 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
         resources=resources,
     )
     key = block_code or "untagged"
-    return _text(json.dumps({key: [stack_obj.model_dump()]}, indent=2))
+    result = {key: [stack_obj.model_dump()]}
+    _fc.put("results", f"stack_{stack_name}", result)
+    return _text(json.dumps(result, indent=2))
 
 
 async def _handle_get_resource_dimensions(arguments: dict) -> list[types.TextContent]:
@@ -346,6 +366,14 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
     if not block_code:
         raise MissingToolParam("Missing block_code")
 
+    from src.core import file_cache as _fc
+    cache_key = f"block_{block_code.upper()}"
+    if not force_refresh:
+        cached_result = _fc.get("results", cache_key)
+        if cached_result is not None:
+            logger.info(f"resource_fetcher_by_block_code: returning '{block_code}' from file cache")
+            return _text(json.dumps(cached_result, indent=2))
+
     logger.info(f"resource_fetcher_by_block_code: '{block_code}' across {US_REGIONS}")
 
     stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
@@ -375,7 +403,9 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
         result.append(stack_obj.model_dump())
 
     logger.info(f"resource_fetcher_by_block_code: '{block_code}' -> {len(result)} stack(s)")
-    return _text(json.dumps({block_code: result}, indent=2))
+    output = {block_code: result}
+    _fc.put("results", cache_key, output)
+    return _text(json.dumps(output, indent=2))
 
 
 async def _handle_audit_by_block_code(arguments: dict) -> list[types.TextContent]:
