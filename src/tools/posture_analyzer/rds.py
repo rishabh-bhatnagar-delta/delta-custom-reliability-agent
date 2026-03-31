@@ -61,7 +61,7 @@ def _classify_failover_config(a: ResilienceAnalyzer):
                    "Read replicas exist but no Multi-AZ; replicas serve reads but writer failover requires manual promotion.",
                    penalty=0)
     else:
-        a.add_gap("Failover Configuration", "SILOED",
+        a.add_gap("Failover Configuration", "NO FAILOVER",
                    "Single instance with no Multi-AZ and no replicas; single point of failure.",
                    penalty=0)
 

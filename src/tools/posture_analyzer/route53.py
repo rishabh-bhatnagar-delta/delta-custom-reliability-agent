@@ -34,9 +34,9 @@ def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]
 
 
 def _classify_routing(records: list) -> str:
-    """Classify a record group's HA pattern: ACTIVE-ACTIVE, ACTIVE-PASSIVE, or SILOED."""
+    """Classify a record group's HA pattern: ACTIVE-ACTIVE, ACTIVE-PASSIVE, or NO FAILOVER."""
     if len(records) <= 1:
-        return "SILOED"
+        return "NO FAILOVER"
 
     has_failover = any(r.get("Failover") for r in records)
     has_weight = any(r.get("Weight") is not None for r in records)
@@ -57,7 +57,7 @@ def _classify_routing(records: list) -> str:
     if has_latency or has_geo or has_multivalue:
         return "ACTIVE-ACTIVE"
 
-    return "SILOED"
+    return "NO FAILOVER"
 
 
 def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
@@ -65,17 +65,17 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     records = group.get("Records") or []
     classification = _classify_routing(records)
 
-    # --- SILOED ---
-    if classification == "SILOED":
+    # --- NO FAILOVER ---
+    if classification == "NO FAILOVER":
         rs = records[0] if records else {}
         if rs.get("AliasTarget"):
-            a.add_gap(f"Record: {name}", "SILOED (ALIAS)",
+            a.add_gap(f"Record: {name}", "NO FAILOVER (ALIAS)",
                        "Single alias record; HA depends on the target resource configuration.",
                        penalty=0)
         else:
-            a.add_gap(f"Record: {name}", "SILOED",
+            a.add_gap(f"Record: {name}", "NO FAILOVER",
                        "Single record with no routing policy; no failover capability.",
-                       penalty=1, recommendation=f"Record '{name}' is siloed. Consider adding failover or weighted routing.")
+                       penalty=1, recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
         return
 
     # --- Emit HA classification ---

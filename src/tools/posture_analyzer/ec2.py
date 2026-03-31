@@ -25,7 +25,7 @@ def get_ec2_resilience_report(instance_id: str, dimensions: List[Dict[str, Any]]
 
 def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
     """
-    Classify EC2 failover configuration as ACTIVE-ACTIVE, ACTIVE-PASSIVE, or SILOED.
+    Classify EC2 failover configuration as ACTIVE-ACTIVE, ACTIVE-PASSIVE, or NO FAILOVER.
 
     Logic:
     ┌─ No ASG?
@@ -47,7 +47,7 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
         └─ ACTIVE-ACTIVE: traffic distributed across multiple healthy instances in multiple AZs.
     """
     if not asg_detail:
-        a.add_gap("Failover Configuration", "SILOED",
+        a.add_gap("Failover Configuration", "NO FAILOVER",
                    "Standalone instance with no Auto Scaling Group; no redundancy or automatic recovery.",
                    penalty=0)
         return
@@ -60,7 +60,7 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
     healthy_targets = sum(1 for t in tg_health if t.get("HealthState") == "healthy")
 
     if desired == 0 and min_size == 0:
-        a.add_gap("Failover Configuration", "SILOED",
+        a.add_gap("Failover Configuration", "NO FAILOVER",
                    "ASG exists but DesiredCapacity and MinSize are 0; nothing is running or standing by.",
                    penalty=0)
     elif desired == 1:
