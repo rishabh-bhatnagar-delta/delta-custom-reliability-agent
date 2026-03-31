@@ -78,7 +78,8 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
                 stacks.append(StackSummary(
                     stack_name=stack['StackName'],
                     stack_id=stack['StackId'],
-                    block_code=tags.get('blockCode')
+                    block_code=tags.get('blockCode'),
+                    region=aws_provider.region,
                 ))
         _stacks_cache = (stacks, time.time())
         logger.info(f"fetch_only_stacks: found {len(stacks)} active stack(s), cached")
@@ -129,9 +130,29 @@ async def fetch_and_print_stack(aws_provider: AWSClientProvider, stack: StackSum
         stack_name=stack.stack_name,
         stack_id=stack.stack_id,
         block_code=stack.block_code,
+        region=stack.region,
         resources=stack_resources
     )
     print(json.dumps(stack_obj.model_dump(), indent=2))
+
+
+async def fetch_stacks_multi_region(regions: List[str], force_refresh: bool = False) -> List[StackSummary]:
+    """Fetch stacks across multiple regions concurrently."""
+    async def _fetch_region(region: str):
+        provider = AWSClientProvider(region=region)
+        try:
+            stacks = await fetch_only_stacks(provider, force_refresh=force_refresh)
+            logger.info(f"fetch_stacks_multi_region: {region} -> {len(stacks)} stack(s)")
+            return stacks
+        except Exception as e:
+            logger.warning(f"fetch_stacks_multi_region: {region} failed - {e}")
+            return []
+
+    results = await asyncio.gather(*(_fetch_region(r) for r in regions))
+    all_stacks = []
+    for stacks in results:
+        all_stacks.extend(stacks)
+    return all_stacks
 
 
 async def run_local():

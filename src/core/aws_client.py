@@ -5,12 +5,12 @@ from .constants import AWS_REGION, AWS_PROFILE
 
 
 class AWSClientProvider:
-    def __init__(self):
+    def __init__(self, region: str = None):
+        self.region = region or AWS_REGION
         self.config = Config(
-            region_name=AWS_REGION,
+            region_name=self.region,
             retries={'max_attempts': 10, 'mode': 'standard'}
         )
-
         self._session = boto3.Session(profile_name=AWS_PROFILE)
         self._client_cache = {}
 
@@ -29,7 +29,6 @@ class AWSClientProvider:
     def get_service_name_by_resource_type(resource_type: str):
         resource_type = resource_type.lower()
         if '::' in resource_type and resource_type.startswith('aws'):
-            # We are expecting resource_type like "AWS::IAM::Role"
             return resource_type.split('::')[1]
         else:
             return resource_type

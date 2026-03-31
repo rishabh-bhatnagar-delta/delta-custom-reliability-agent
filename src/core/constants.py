@@ -14,3 +14,11 @@ CACHE_TTL_MINUTES = 15
 
 # Max parallel requests to CloudFormation API
 MAX_CONCURRENCY = 10
+
+# US regions to scan
+US_REGIONS = [
+    "us-east-1",
+    "us-east-2",
+    "us-west-1",
+    "us-west-2",
+]

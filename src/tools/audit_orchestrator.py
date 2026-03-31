@@ -6,7 +6,7 @@ from src.core.aws_client import AWSClientProvider
 from src.models.dimensions import DimensionSupportedResource
 from src.models.resources import StackResource
 from src.tools.auditor.auditor import get_resource_dimensions
-from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack
+from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, fetch_stacks_multi_region
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
 from src.tools.posture_analyzer.ec2 import get_ec2_resilience_report
@@ -54,14 +54,20 @@ async def _audit_single_resource(
     aws: AWSClientProvider,
     resource: StackResource,
     stack_name: str,
+    region: str = None,
 ) -> Dict[str, Any]:
     """Fetch dimensions and run posture analysis for one resource."""
+    # Use region-specific provider if region differs
+    if region and region != aws.region:
+        aws = AWSClientProvider(region=region)
+
     result = {
         "stack_name": stack_name,
         "logical_id": resource.logical_id,
         "physical_id": resource.physical_id,
         "resource_type": resource.resource_type,
         "status": resource.status,
+        "region": region or aws.region,
     }
 
     if not resource.physical_id:
@@ -183,32 +189,38 @@ async def audit_by_block_code(
     aws: AWSClientProvider,
     block_code: str,
     max_concurrency: int = 5,
+    regions: List[str] = None,
 ) -> Dict[str, Any]:
     """Full audit pipeline: fetch stacks → dimensions → posture analysis → report."""
-    logger.info(f"audit_by_block_code: starting for '{block_code}'")
+    from src.core.constants import US_REGIONS
+    scan_regions = regions or US_REGIONS
+    logger.info(f"audit_by_block_code: starting for '{block_code}' across {scan_regions}")
 
-    # 1. Fetch stacks
-    stacks_list = await fetch_only_stacks(aws)
+    # 1. Fetch stacks across all regions
+    stacks_list = await fetch_stacks_multi_region(scan_regions)
     matching = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
 
     if not matching:
         return {"block_code": block_code, "error": "No stacks found for this block code"}
 
-    # 2. Fetch resources for all stacks
+    logger.info(f"audit_by_block_code: found {len(matching)} stack(s) for '{block_code}'")
+
+    # 2. Fetch resources for all stacks (using region-specific providers)
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def _fetch(stack):
         async with semaphore:
-            resources = await fetch_resources_in_stack(aws, stack.stack_name)
+            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            resources = await fetch_resources_in_stack(provider, stack.stack_name)
             return stack, resources
 
     stack_results = await asyncio.gather(*(_fetch(s) for s in matching))
 
-    # 3. Audit each supported resource
+    # 3. Audit each supported resource (with correct region)
     audit_tasks = []
     for stack, resources in stack_results:
         for resource in resources:
-            audit_tasks.append(_audit_single_resource(aws, resource, stack.stack_name))
+            audit_tasks.append(_audit_single_resource(aws, resource, stack.stack_name, region=stack.region))
 
     resource_audits = await asyncio.gather(*audit_tasks)
 
@@ -219,6 +231,7 @@ async def audit_by_block_code(
         stack_reports.append({
             "stack_name": stack.stack_name,
             "stack_id": stack.stack_id,
+            "region": stack.region,
             "total_resources": len(resources),
             "analyzed": len([r for r in stack_audits if r.get("audit_status") == "ANALYZED"]),
             "unsupported": len([r for r in stack_audits if r.get("audit_status") == "UNSUPPORTED"]),

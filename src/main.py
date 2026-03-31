@@ -10,11 +10,11 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from src.core.aws_client import AWSClientProvider
-from src.core.constants import MAX_CONCURRENCY, LOG_LEVEL
+from src.core.constants import MAX_CONCURRENCY, LOG_LEVEL, US_REGIONS
 from src.core.exceptions import MissingToolParam
 from src.models.resources import CloudFormationStack
 from src.tools.auditor.auditor import get_resource_dimensions
-from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear_cache
+from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear_cache, fetch_stacks_multi_region
 from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
 from src.tools.posture_analyzer.ec2 import get_ec2_resilience_report
 from src.tools.posture_analyzer.rds import get_rds_resilience_report
@@ -220,19 +220,20 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
     if force_refresh:
         clear_cache()
 
-    logger.info(f"resource_fetcher: starting (force_refresh={force_refresh})")
-    stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
+    logger.info(f"resource_fetcher: starting across {US_REGIONS} (force_refresh={force_refresh})")
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
     total = len(stacks_list)
-    logger.info(f"resource_fetcher: found {total} stack(s), max_concurrency={MAX_CONCURRENCY}")
+    logger.info(f"resource_fetcher: found {total} stack(s) across all regions")
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
     completed = {"count": 0}
 
     async def _fetch_with_progress(stack):
         async with semaphore:
-            resources = await fetch_resources_in_stack(aws, stack.stack_name, force_refresh=force_refresh)
+            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            resources = await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh)
         completed["count"] += 1
-        logger.info(f"resource_fetcher: [{completed['count']}/{total}] '{stack.stack_name}' -> {len(resources)} resource(s)")
+        logger.info(f"resource_fetcher: [{completed['count']}/{total}] '{stack.stack_name}' ({stack.region}) -> {len(resources)} resource(s)")
         return resources
 
     all_resources = await asyncio.gather(*(_fetch_with_progress(s) for s in stacks_list))
@@ -243,11 +244,13 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
             stack_name=stack.stack_name,
             stack_id=stack.stack_id,
             block_code=stack.block_code,
+            region=stack.region,
             resources=resources,
         )
         grouped[stack.block_code or "untagged"].append(stack_obj.model_dump())
 
     return _text(json.dumps(grouped, indent=2))
+
 
 
 async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.TextContent]:
@@ -256,19 +259,22 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
     if not stack_name:
         raise MissingToolParam("Missing stack_name")
 
-    logger.info(f"resource_fetcher_by_stacks: '{stack_name}' (force_refresh={force_refresh})")
+    logger.info(f"resource_fetcher_by_stacks: '{stack_name}' across {US_REGIONS}")
 
-    stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
     stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
     block_code = stack_meta.block_code if stack_meta else None
+    region = stack_meta.region if stack_meta else None
 
-    resources = await fetch_resources_in_stack(aws, stack_name, force_refresh=force_refresh)
-    logger.info(f"resource_fetcher_by_stacks: '{stack_name}' -> {len(resources)} resource(s)")
+    provider = AWSClientProvider(region=region) if region else aws
+    resources = await fetch_resources_in_stack(provider, stack_name, force_refresh=force_refresh)
+    logger.info(f"resource_fetcher_by_stacks: '{stack_name}' ({region}) -> {len(resources)} resource(s)")
 
     stack_obj = CloudFormationStack(
         stack_name=stack_name,
         stack_id=stack_meta.stack_id if stack_meta else stack_name,
         block_code=block_code,
+        region=region,
         resources=resources,
     )
     key = block_code or "untagged"
@@ -340,9 +346,9 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
     if not block_code:
         raise MissingToolParam("Missing block_code")
 
-    logger.info(f"resource_fetcher_by_block_code: '{block_code}' (force_refresh={force_refresh})")
+    logger.info(f"resource_fetcher_by_block_code: '{block_code}' across {US_REGIONS}")
 
-    stacks_list = await fetch_only_stacks(aws, force_refresh=force_refresh)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
     matching_stacks = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
 
     if not matching_stacks:
@@ -352,7 +358,8 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
 
     async def _fetch(stack):
         async with semaphore:
-            return await fetch_resources_in_stack(aws, stack.stack_name, force_refresh=force_refresh)
+            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            return await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh)
 
     all_resources = await asyncio.gather(*(_fetch(s) for s in matching_stacks))
 
@@ -362,6 +369,7 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
             stack_name=stack.stack_name,
             stack_id=stack.stack_id,
             block_code=stack.block_code,
+            region=stack.region,
             resources=resources,
         )
         result.append(stack_obj.model_dump())
