@@ -94,9 +94,10 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
     if not force_refresh:
         cached = _get_cached_resources(stack_name)
         if cached is not None:
-            logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(cached)} resource(s) (cached)")
+            logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(cached)} resource(s) (cached)")
             return cached
 
+    logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] fetching resources for '{stack_name}'")
     client = aws_provider.get_cft_client()
     resources = []
 
@@ -113,10 +114,10 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     status=res['ResourceStatus']
                 ))
         _resource_cache[stack_name] = (resources, time.time())
-        logger.info(f"fetch_resources_in_stack: '{stack_name}' -> {len(resources)} resource(s), cached")
+        logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(resources)} resource(s), cached")
         return resources
     except Exception as e:
-        logger.warning(f"fetch_resources_in_stack: failed for '{stack_name}' - {e}", exc_info=True)
+        logger.warning(f"fetch_resources_in_stack: [{aws_provider.region}] failed for '{stack_name}' - {e}", exc_info=True)
         return []
 
 
@@ -154,18 +155,19 @@ async def fetch_stacks_multi_region(regions: List[str], force_refresh: bool = Fa
 
 
 async def run_local():
-    print("--- Fetching All Stacks & Their Resources ---")
-    provider = AWSClientProvider()
+    from src.core.constants import US_REGIONS
+    print(f"--- Fetching All Stacks & Their Resources across {US_REGIONS} ---")
 
-    stacks_list = await fetch_only_stacks(provider)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS)
 
     if not stacks_list:
         print("No active CloudFormation stacks found.")
         return
 
-    print(f"\n[i] Found {len(stacks_list)} active stack(s). Fetching resources...\n")
+    print(f"\n[i] Found {len(stacks_list)} active stack(s) across all regions. Fetching resources...\n")
 
     for stack in stacks_list:
+        provider = AWSClientProvider(region=stack.region)
         await fetch_and_print_stack(provider, stack)
 
     print(f"\n[✓] Successfully processed {len(stacks_list)} stacks.")
