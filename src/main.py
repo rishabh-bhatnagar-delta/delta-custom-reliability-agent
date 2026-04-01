@@ -71,7 +71,7 @@ async def list_tools() -> list[types.Tool]:
                 "Scans all CloudFormation stacks and returns a list of deployed "
                 "physical resources (API Gateway, RDS, DynamoDB, Lambda, S3, etc). "
                 "Use this as the starting point for infrastructure auditing. "
-                "Results are cached for 15 minutes. Use force_refresh to bypass cache."
+                "Results are cached for 24 hours. Use force_refresh to bypass cache."
             ),
             inputSchema={
                 "type": "object",
@@ -109,7 +109,7 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Returns all resources deployed in a specific CloudFormation stack. "
                 "Requires the stack name as input. "
-                "Results are cached for 15 minutes. Use force_refresh to bypass cache."
+                "Results are cached for 24 hours. Use force_refresh to bypass cache."
             ),
             inputSchema={
                 "type": "object",

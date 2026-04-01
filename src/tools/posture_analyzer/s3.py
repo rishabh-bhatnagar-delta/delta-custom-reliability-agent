@@ -44,7 +44,7 @@ def get_s3_resilience_report(bucket_name: str, dimensions: List[Dict[str, Any]])
         if not any(r.get("RTCEnabled") for r in replication if isinstance(r, dict)):
             a.add_gap("Replication Time Control (RTC)", "DISABLED",
                        "Replication exists but no SLA guarantee on replication time.",
-                       recommendation="Enable RTC for predictable replication within 15 minutes.")
+                       recommendation="Enable RTC for predictable replication within 24 hours.")
 
     if not a.dim("CrossRegionBackup", False):
         a.add_gap("Cross-Region Backup", "NOT CONFIGURED",
