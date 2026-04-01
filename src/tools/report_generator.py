@@ -241,8 +241,13 @@ def _build_structured_report(audit_data: dict) -> str:
 
                 elif "DynamoDB" in resource_type:
                     global_regions = dims.get("GlobalTableRegions", [])
+                    streams = dims.get("StreamsConfiguration", {})
+                    stream_enabled = streams.get("StreamEnabled", False) if isinstance(streams, dict) else False
+                    stream_view = streams.get("StreamViewType", "N/A") if isinstance(streams, dict) else "N/A"
                     if status == "ACTIVE-ACTIVE" and global_regions:
                         evidence_parts.append(f"GlobalTableRegions={global_regions}")
+                        evidence_parts.append(f"StreamEnabled={stream_enabled}")
+                        evidence_parts.append(f"StreamViewType={stream_view}")
                     else:
                         evidence_parts.append(f"GlobalTableRegions=[]")
 
