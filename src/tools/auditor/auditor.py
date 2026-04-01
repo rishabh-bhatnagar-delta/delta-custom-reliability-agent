@@ -1,8 +1,10 @@
 import asyncio
 import json
+import logging
 from typing import List
 
 from src.core.aws_client import AWSClientProvider
+from src.core import file_cache
 from src.models.dimensions import DimensionFetcher, DimensionSupportedResource
 from src.models.resources import DimensionOutput
 from src.tools.auditor.dimension_fetcher.api_gateway import APIGatewayDimensionFetcher
@@ -12,6 +14,8 @@ from src.tools.auditor.dimension_fetcher.lambda_ import LambdaDimensionFetcher
 from src.tools.auditor.dimension_fetcher.rds import RDSDimensionFetcher
 from src.tools.auditor.dimension_fetcher.route53 import Route53DimensionFetcher
 from src.tools.auditor.dimension_fetcher.s3 import S3DimensionFetcher
+
+logger = logging.getLogger(__name__)
 
 
 def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientProvider) -> DimensionFetcher:
@@ -39,8 +43,17 @@ def get_dimension_fetcher_from_resource_type(resource_type: str, aws: AWSClientP
 
 
 async def get_resource_dimensions(aws: AWSClientProvider, physical_id, resource_type) -> List[DimensionOutput]:
+    cache_key = f"{physical_id}::{resource_type}"
+    cached = file_cache.get("dimensions", cache_key)
+    if cached is not None:
+        logger.info(f"dimensions: cache hit for '{physical_id}' ({resource_type})")
+        return [DimensionOutput(**d) for d in cached]
+
     dimension_fetcher = get_dimension_fetcher_from_resource_type(resource_type, aws)
     dimensions = dimension_fetcher.get_dimensions(physical_id, resource_type=resource_type)
+
+    file_cache.put("dimensions", cache_key, [d.model_dump() for d in dimensions])
+    logger.info(f"dimensions: fetched and cached {len(dimensions)} dimension(s) for '{physical_id}'")
     return dimensions
 
 
