@@ -171,12 +171,91 @@ def _build_structured_report(audit_data: dict) -> str:
         report = r.get("resilience_report", {}).get("report", {})
         for g in report.get("resilience_gaps", []):
             if g.get("name", "").startswith("Failover Configuration"):
+                dims = {d.get("name"): d.get("value") for d in r.get("dimensions", [])}
+                resource_type = r.get("resource_type", "")
+                status = g.get("status", "")
+                evidence_parts = []
+
+                if "RDS" in resource_type:
+                    gc = dims.get("GlobalClusterMembers", [])
+                    has_secondary = any(not m.get("IsWriter") for m in gc if isinstance(m, dict)) if gc else False
+
+                    if has_secondary:
+                        secondary_members = [m for m in gc if isinstance(m, dict) and not m.get("IsWriter")]
+                        secondary_arns = [m.get("DBClusterArn", "") for m in secondary_members]
+                        secondary_regions = []
+                        for arn in secondary_arns:
+                            parts = arn.split(":")
+                            if len(parts) >= 4:
+                                secondary_regions.append(parts[3])
+                        write_fwd_statuses = [m.get("GlobalWriteForwardingStatus", "disabled") for m in secondary_members]
+                        evidence_parts.append(f"GlobalClusterIdentifier={dims.get('GlobalClusterIdentifier')}")
+                        evidence_parts.append(f"SecondaryRegions={secondary_regions if secondary_regions else len(secondary_arns)}")
+                        evidence_parts.append(f"GlobalWriteForwardingStatus={write_fwd_statuses[0] if len(write_fwd_statuses) == 1 else write_fwd_statuses}")
+                    elif status == "ACTIVE-ACTIVE" and dims.get("ClusterIdentifier"):
+                        evidence_parts.append(f"ClusterIdentifier={dims.get('ClusterIdentifier')}")
+                        evidence_parts.append(f"ClusterReaders={dims.get('ClusterReaders')}")
+                        evidence_parts.append(f"MultiAZ={dims.get('MultiAZ')}")
+                    elif status == "ACTIVE-PASSIVE" and dims.get("MultiAZ"):
+                        evidence_parts.append(f"MultiAZ={dims.get('MultiAZ')}")
+                        if dims.get("ClusterIdentifier"):
+                            evidence_parts.append(f"ClusterReaders={dims.get('ClusterReaders')}")
+                    elif status == "ACTIVE-PASSIVE" and dims.get("ReadReplicaIDs"):
+                        evidence_parts.append(f"MultiAZ={dims.get('MultiAZ')}")
+                        evidence_parts.append(f"ReadReplicas={len(dims.get('ReadReplicaIDs', []))}")
+                    else:
+                        evidence_parts.append(f"MultiAZ={dims.get('MultiAZ')}")
+                        evidence_parts.append(f"ReadReplicas={len(dims.get('ReadReplicaIDs', []))}")
+                        evidence_parts.append(f"GlobalCluster={'Yes' if dims.get('GlobalClusterIdentifier') else 'No'}")
+
+                elif "EC2" in resource_type:
+                    asg = dims.get("ASGDetail")
+                    if not asg or not isinstance(asg, dict):
+                        evidence_parts.append("AutoScalingGroup=None")
+                    elif status == "NO FAILOVER" and asg.get("DesiredCapacity", 0) == 0:
+                        evidence_parts.append(f"ASG={asg.get('Name', '?')}")
+                        evidence_parts.append(f"DesiredCapacity={asg.get('DesiredCapacity')}")
+                        evidence_parts.append(f"MinSize={asg.get('MinSize')}")
+                    elif status == "ACTIVE-PASSIVE" and asg.get("DesiredCapacity", 0) == 1:
+                        evidence_parts.append(f"DesiredCapacity=1")
+                        evidence_parts.append(f"AZs={asg.get('AvailabilityZones', [])}")
+                    elif status == "ACTIVE-PASSIVE":
+                        evidence_parts.append(f"DesiredCapacity={asg.get('DesiredCapacity')}")
+                        evidence_parts.append(f"AZs={asg.get('AvailabilityZones', [])}")
+                        tg = asg.get("TargetGroupARNs", [])
+                        evidence_parts.append(f"TargetGroups={len(tg)}")
+                        if tg:
+                            th = asg.get("TargetGroupHealth", [])
+                            healthy = sum(1 for t in th if isinstance(t, dict) and t.get("HealthState") == "healthy")
+                            evidence_parts.append(f"HealthyTargets={healthy}")
+                    elif status == "ACTIVE-ACTIVE":
+                        evidence_parts.append(f"DesiredCapacity={asg.get('DesiredCapacity')}")
+                        evidence_parts.append(f"AZs={asg.get('AvailabilityZones', [])}")
+                        th = asg.get("TargetGroupHealth", [])
+                        healthy = sum(1 for t in th if isinstance(t, dict) and t.get("HealthState") == "healthy")
+                        evidence_parts.append(f"HealthyTargets={healthy}")
+
+                elif "Route53" in resource_type:
+                    # Evidence is already well-described in the impact text for Route53
+                    pass
+
+                elif "DynamoDB" in resource_type:
+                    global_regions = dims.get("GlobalTableRegions", [])
+                    if status == "ACTIVE-ACTIVE" and global_regions:
+                        evidence_parts.append(f"GlobalTableRegions={global_regions}")
+                    else:
+                        evidence_parts.append(f"GlobalTableRegions=[]")
+
+                evidence_str = "; ".join(evidence_parts) if evidence_parts else ""
+
                 failover_entries.append({
                     "resource": r.get("physical_id", ""),
                     "type": r.get("resource_type", ""),
                     "stack": r.get("stack_name", ""),
-                    "status": g.get("status", ""),
+                    "region": r.get("region", ""),
+                    "status": status,
                     "impact": g.get("impact", ""),
+                    "evidence": evidence_str,
                 })
 
     if failover_entries:
@@ -184,15 +263,23 @@ def _build_structured_report(audit_data: dict) -> str:
         lines.extend([
             "## Failover Configuration Summary",
             "",
-            "| Resource | Type | Stack | Configuration | Details |",
-            "|---|---|---|---|---|",
         ])
         for entry in failover_entries:
-            lines.append(
-                f"| {entry['resource']} | {entry['type']} | "
-                f"{entry['stack']} | {entry['status']} | {entry['impact']} |"
-            )
-        lines.append("")
+            lines.extend([
+                f"### {entry['resource']}",
+                "",
+                f"| Field | Value |",
+                f"|---|---|",
+                f"| Resource Type | {entry['type']} |",
+                f"| Stack | {entry['stack']} |",
+                f"| Region | {entry['region']} |",
+                f"| Classification | **{entry['status']}** |",
+                f"| Reasoning | {entry['impact']} |",
+            ])
+            if entry['evidence']:
+                lines.append(f"| Key Evidence | `{entry['evidence']}` |")
+            lines.extend(["", ""])
+
 
     lines.extend([
         "## Critical Findings",

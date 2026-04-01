@@ -46,9 +46,19 @@ def _classify_failover_config(a: ResilienceAnalyzer):
 
     if has_secondary_region:
         secondary_count = sum(1 for m in gc_members if not m.get("IsWriter"))
-        a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   f"Global Database with {secondary_count} secondary region(s) detected (GlobalClusterMembers has non-writer members). Cross-region replication and failover available.",
-                   penalty=0)
+        # Check if any secondary has write forwarding enabled — that's true AA
+        has_write_forwarding = any(
+            m.get("GlobalWriteForwardingStatus") in ("enabled", "enabling")
+            for m in gc_members if not m.get("IsWriter")
+        )
+        if has_write_forwarding:
+            a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
+                       f"Global Database with {secondary_count} secondary region(s) and GlobalWriteForwardingStatus=enabled. Writes can be forwarded from secondary to primary, enabling active-active pattern.",
+                       penalty=0)
+        else:
+            a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
+                       f"Global Database with {secondary_count} secondary region(s) but GlobalWriteForwardingStatus=disabled. Secondary is read-only; writes only go to primary region. Cross-region failover requires promotion.",
+                       penalty=0)
     elif cluster_id and cluster_readers >= 2 and multi_az:
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
                    f"Aurora cluster '{cluster_id}' has {cluster_readers} readers and Multi-AZ=true. Multiple readers actively serve traffic across AZs.",

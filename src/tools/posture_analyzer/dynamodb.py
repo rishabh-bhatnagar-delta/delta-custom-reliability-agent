@@ -10,6 +10,17 @@ def get_dynamodb_resilience_report(dimensions: List[Dict[str, Any]]) -> Resource
     resource_name = dim_map.get("ResourceName", "Unknown DynamoDB Table")
     a = ResilienceAnalyzer(resource_name, dimensions)
 
+    # Failover Configuration
+    global_regions = a.dim("GlobalTableRegions", [])
+    if global_regions:
+        a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
+                   f"Global Table with replicas in {global_regions}. Multi-region active-active reads/writes.",
+                   penalty=0)
+    else:
+        a.add_gap("Failover Configuration", "NO FAILOVER",
+                   f"GlobalTableRegions is empty. Single-region table with no cross-region replication.",
+                   penalty=0)
+
     if not a.dim("DeletionProtection"):
         a.add_gap("Deletion Protection", "DISABLED",
                    "Table can be accidentally deleted, causing total data loss.",
