@@ -253,6 +253,19 @@ def _build_structured_report(audit_data: dict) -> str:
 
                 evidence_str = "; ".join(evidence_parts) if evidence_parts else ""
 
+                record_name = ""
+                record_type = ""
+                if "Route53" in resource_type:
+                    raw = g.get("name", "").replace("Failover Configuration: ", "").replace("Failover Configuration", "")
+                    # Format is "domain.com. (A)" — extract name and type
+                    import re
+                    m = re.match(r'^(.+?)\s+\((\w+)\)$', raw)
+                    if m:
+                        record_name = m.group(1)
+                        record_type = m.group(2)
+                    else:
+                        record_name = raw
+
                 failover_entries.append({
                     "resource": r.get("physical_id", ""),
                     "type": r.get("resource_type", ""),
@@ -261,7 +274,8 @@ def _build_structured_report(audit_data: dict) -> str:
                     "status": status,
                     "impact": g.get("impact", ""),
                     "evidence": evidence_str,
-                    "record_name": g.get("name", "").replace("Failover Configuration: ", "").replace("Failover Configuration", "") if "Route53" in resource_type else "",
+                    "record_name": record_name,
+                    "record_type": record_type,
                 })
 
     if failover_entries:
@@ -285,6 +299,8 @@ def _build_structured_report(audit_data: dict) -> str:
             ])
             if entry.get('record_name'):
                 lines.append(f"| Record | {entry['record_name']} |")
+            if entry.get('record_type'):
+                lines.append(f"| Record Type | {entry['record_type']} |")
             lines.extend([
                 f"| Classification | **{entry['status']}** |",
                 f"| Reasoning | {entry['impact']} |",

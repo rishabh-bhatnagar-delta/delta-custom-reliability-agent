@@ -62,18 +62,20 @@ def _classify_routing(records: list) -> str:
 
 def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     name = group.get("Name", "")
+    rtype = group.get("Type", "")
     records = group.get("Records") or []
     classification = _classify_routing(records)
+    label = f"{name} ({rtype})" if rtype else name
 
     # --- NO FAILOVER ---
     if classification == "NO FAILOVER":
         rs = records[0] if records else {}
         if rs.get("AliasTarget"):
-            a.add_gap(f"Failover Configuration: {name}", "NO FAILOVER (ALIAS)",
+            a.add_gap(f"Failover Configuration: {label}", "NO FAILOVER (ALIAS)",
                        "Single alias record; HA depends on the target resource configuration.",
                        penalty=0)
         else:
-            a.add_gap(f"Failover Configuration: {name}", "NO FAILOVER",
+            a.add_gap(f"Failover Configuration: {label}", "NO FAILOVER",
                        "Single record with no routing policy; no failover capability.",
                        penalty=0, recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
         return
@@ -94,7 +96,7 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
             reason = f"Weighted routing with weights={weights}. Only one record has non-zero weight; manual failover required."
         else:
             reason = "Routing policy indicates active-passive pattern."
-        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-PASSIVE", reason, penalty=0)
+        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-PASSIVE", reason, penalty=0)
     else:
         if has_latency:
             regions = [r.get("Region") for r in records if r.get("Region")]
@@ -108,7 +110,7 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
             reason = f"Multivalue answer routing with {len(records)} records. Multiple IPs returned to clients."
         else:
             reason = "Multiple records distribute traffic across endpoints."
-        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-ACTIVE", reason, penalty=0)
+        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-ACTIVE", reason, penalty=0)
 
     # --- Policy-specific gap checks ---
 
