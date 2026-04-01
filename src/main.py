@@ -21,7 +21,7 @@ from src.tools.posture_analyzer.rds import get_rds_resilience_report
 from src.tools.posture_analyzer.route53 import get_route53_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
-from src.tools.audit_orchestrator import audit_by_block_code
+from src.tools.audit_orchestrator import audit_by_block_code, audit_by_stack
 from src.tools.report_generator import generate_markdown_report
 
 _lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
@@ -208,6 +208,23 @@ async def list_tools() -> list[types.Tool]:
                     },
                 },
                 "required": ["block_code"],
+            },
+        ),
+        types.Tool(
+            name="generate_audit_report_by_stack",
+            description=(
+                "Runs a full resilience audit for a single CloudFormation stack (no block code required) "
+                "and generates a detailed Markdown report. Useful for stacks without a block code tag."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "stack_name": {
+                        "type": "string",
+                        "description": "The CloudFormation stack name to audit and generate a report for.",
+                    },
+                },
+                "required": ["stack_name"],
             },
         ),
     ]
@@ -431,6 +448,18 @@ async def _handle_generate_audit_report(arguments: dict) -> list[types.TextConte
     return _text(markdown)
 
 
+async def _handle_generate_audit_report_by_stack(arguments: dict) -> list[types.TextContent]:
+    stack_name = arguments.get("stack_name")
+    if not stack_name:
+        raise MissingToolParam("Missing stack_name")
+
+    logger.info(f"generate_audit_report_by_stack: starting for '{stack_name}'")
+    audit_data = await audit_by_stack(aws, stack_name, max_concurrency=MAX_CONCURRENCY)
+    markdown = generate_markdown_report(audit_data)
+    logger.info(f"generate_audit_report_by_stack: completed for '{stack_name}'")
+    return _text(markdown)
+
+
 # --- Tool Router ---
 
 _TOOL_HANDLERS = {
@@ -441,6 +470,7 @@ _TOOL_HANDLERS = {
     "analyze_resilience": _handle_analyze_resilience,
     "audit_by_block_code": _handle_audit_by_block_code,
     "generate_audit_report": _handle_generate_audit_report,
+    "generate_audit_report_by_stack": _handle_generate_audit_report_by_stack,
 }
 
 

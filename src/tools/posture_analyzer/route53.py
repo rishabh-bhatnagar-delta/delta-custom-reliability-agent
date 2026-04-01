@@ -69,13 +69,13 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
     if classification == "NO FAILOVER":
         rs = records[0] if records else {}
         if rs.get("AliasTarget"):
-            a.add_gap(f"Record: {name}", "NO FAILOVER (ALIAS)",
+            a.add_gap(f"Failover Configuration: {name}", "NO FAILOVER (ALIAS)",
                        "Single alias record; HA depends on the target resource configuration.",
                        penalty=0)
         else:
-            a.add_gap(f"Record: {name}", "NO FAILOVER",
+            a.add_gap(f"Failover Configuration: {name}", "NO FAILOVER",
                        "Single record with no routing policy; no failover capability.",
-                       penalty=1, recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
+                       penalty=0, recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
         return
 
     # --- Emit HA classification ---

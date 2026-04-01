@@ -261,6 +261,7 @@ def _build_structured_report(audit_data: dict) -> str:
                     "status": status,
                     "impact": g.get("impact", ""),
                     "evidence": evidence_str,
+                    "record_name": g.get("name", "").replace("Failover Configuration: ", "").replace("Failover Configuration", "") if "Route53" in resource_type else "",
                 })
 
     if failover_entries:
@@ -270,14 +271,21 @@ def _build_structured_report(audit_data: dict) -> str:
             "",
         ])
         for entry in failover_entries:
+            heading = entry['resource']
+            if entry.get('record_name'):
+                heading = f"{entry['resource']} — {entry['record_name']}"
             lines.extend([
-                f"### {entry['resource']}",
+                f"### {heading}",
                 "",
                 f"| Field | Value |",
                 f"|---|---|",
                 f"| Resource Type | {entry['type']} |",
                 f"| Stack | {entry['stack']} |",
                 f"| Region | {entry['region']} |",
+            ])
+            if entry.get('record_name'):
+                lines.append(f"| Record | {entry['record_name']} |")
+            lines.extend([
                 f"| Classification | **{entry['status']}** |",
                 f"| Reasoning | {entry['impact']} |",
             ])
