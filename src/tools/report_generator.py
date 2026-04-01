@@ -24,7 +24,7 @@ def _save_report(markdown: str, block_code: str):
     filepath = os.path.join(reports_dir, filename)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(markdown)
-    logger.info(f"Report saved to {filepath}")
+    logger.info(f"report_generator: report saved to {filepath} ({len(markdown)} chars)")
 
 
 def _build_condensed_summary(audit_data: dict) -> dict:
@@ -87,20 +87,31 @@ def _call_bedrock(prompt: str) -> str:
 def generate_markdown_report(audit_data: dict) -> str:
     """Generate a detailed markdown report: structured template + Bedrock AI insights."""
     block_code = audit_data.get("application_summary", {}).get("block_code", "unknown")
+    total_resources = audit_data.get("application_summary", {}).get("resources_analyzed", 0)
+    total_gaps = audit_data.get("application_summary", {}).get("total_gaps", 0)
+
+    logger.info(f"report_generator: starting report for '{block_code}' ({total_resources} resources, {total_gaps} gaps)")
 
     # Always generate the structured report (handles any size)
+    logger.info(f"report_generator: building structured report for '{block_code}'")
     structured_report = _build_structured_report(audit_data)
+    logger.info(f"report_generator: structured report built ({len(structured_report)} chars)")
 
     # Try to get AI-generated insights from Bedrock
+    logger.info(f"report_generator: requesting AI insights from Bedrock for '{block_code}'")
     ai_section = _generate_ai_insights(audit_data)
 
     # Combine: AI insights at the top, structured data below
     if ai_section:
+        logger.info(f"report_generator: AI insights received ({len(ai_section)} chars), combining with structured report")
         report = ai_section + "\n\n---\n\n" + structured_report
     else:
+        logger.info("report_generator: no AI insights, using structured report only")
         report = structured_report
 
+    logger.info(f"report_generator: saving report for '{block_code}' ({len(report)} chars)")
     _save_report(report, block_code)
+    logger.info(f"report_generator: report generation complete for '{block_code}'")
     return report
 
 
@@ -110,26 +121,31 @@ def _generate_ai_insights(audit_data: dict) -> str:
     agent_alias_id = os.getenv('BEDROCK_AGENT_ALIAS_ID')
 
     if not agent_id or not agent_alias_id:
-        logger.warning("Bedrock agent not configured, skipping AI insights")
+        logger.warning("report_generator: Bedrock agent not configured, skipping AI insights")
         return ""
 
+    logger.info("report_generator: building condensed summary for Bedrock")
     condensed = _build_condensed_summary(audit_data)
     prompt = REPORT_GENERATION_PROMPT + json.dumps(condensed, indent=2)
+    logger.info(f"report_generator: sending prompt to Bedrock ({len(prompt)} chars)")
 
     try:
         response = _call_bedrock(prompt)
         if response.strip():
+            logger.info(f"report_generator: Bedrock returned AI insights ({len(response)} chars)")
             return response
-        logger.warning("Bedrock returned empty response")
+        logger.warning("report_generator: Bedrock returned empty response")
         return ""
     except (ClientError, Exception) as e:
-        logger.error(f"Bedrock AI insights failed: {e}")
+        logger.error(f"report_generator: Bedrock AI insights failed: {e}")
         return ""
 
 
 def _build_structured_report(audit_data: dict) -> str:
     """Deterministic structured report — always complete, no token limits."""
     summary = audit_data.get("application_summary", {})
+    resource_audits = audit_data.get("resource_audits", [])
+    logger.info(f"report_generator: building structured report — {len(resource_audits)} resource audit(s), score {summary.get('application_resilience_score', '?')}/10")
     lines = [
         f"# Detailed Audit Data: {summary.get('block_code', 'Unknown')}",
         "",
@@ -147,11 +163,43 @@ def _build_structured_report(audit_data: dict) -> str:
         f"| Lowest Resource Score | {summary.get('lowest_resource_score', 0)}/10 |",
         f"| Total Gaps | {summary.get('total_gaps', 0)} |",
         "",
+    ]
+
+    # --- Failover Configuration Summary ---
+    failover_entries = []
+    for r in audit_data.get("resource_audits", []):
+        report = r.get("resilience_report", {}).get("report", {})
+        for g in report.get("resilience_gaps", []):
+            if g.get("name", "").startswith("Failover Configuration"):
+                failover_entries.append({
+                    "resource": r.get("physical_id", ""),
+                    "type": r.get("resource_type", ""),
+                    "stack": r.get("stack_name", ""),
+                    "status": g.get("status", ""),
+                    "impact": g.get("impact", ""),
+                })
+
+    if failover_entries:
+        logger.info(f"report_generator: found {len(failover_entries)} resource(s) with failover configuration")
+        lines.extend([
+            "## Failover Configuration Summary",
+            "",
+            "| Resource | Type | Stack | Configuration | Details |",
+            "|---|---|---|---|---|",
+        ])
+        for entry in failover_entries:
+            lines.append(
+                f"| {entry['resource']} | {entry['type']} | "
+                f"{entry['stack']} | {entry['status']} | {entry['impact']} |"
+            )
+        lines.append("")
+
+    lines.extend([
         "## Critical Findings",
         "",
         "| Resource | Type | Stack | Finding | Status | Impact |",
         "|---|---|---|---|---|---|",
-    ]
+    ])
 
     for gap in summary.get("critical_gaps", []):
         lines.append(
