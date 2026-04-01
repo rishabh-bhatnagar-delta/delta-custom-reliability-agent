@@ -88,10 +88,13 @@ async def _audit_single_resource(
 
     # Fetch dimensions
     try:
+        logger.debug(f"audit: fetching dimensions for '{resource.physical_id}' ({resource.resource_type})")
         dimensions = await get_resource_dimensions(aws, resource.physical_id, resource.resource_type)
         dims_list = [d.model_dump() for d in dimensions]
         result["dimensions"] = dims_list
+        logger.debug(f"audit: got {len(dims_list)} dimension(s) for '{resource.physical_id}'")
     except Exception as e:
+        logger.error(f"audit: dimension fetch failed for '{resource.physical_id}': {e}")
         result["audit_status"] = "DIMENSION_ERROR"
         result["reason"] = str(e)
         return result
@@ -101,10 +104,14 @@ async def _audit_single_resource(
         report = analyzer(resource.physical_id, dims_list)
         result["audit_status"] = "ANALYZED"
         result["resilience_report"] = report.model_dump()
+        score = report.report.overall_resilience_score if report.report else "?"
+        gaps = len(report.report.resilience_gaps) if report.report else 0
+        logger.info(f"audit: '{resource.physical_id}' ({resource.resource_type}) -> score={score}/10, gaps={gaps}")
     except Exception as e:
+        logger.error(f"audit: posture analysis failed for '{resource.physical_id}': {e}")
         result["audit_status"] = "ANALYSIS_ERROR"
         result["reason"] = str(e)
-        result["dimensions"] = dims_list  # still include raw dimensions
+        result["dimensions"] = dims_list
 
     return result
 
@@ -201,6 +208,7 @@ async def audit_by_block_code(
     matching = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
 
     if not matching:
+        logger.warning(f"audit_by_block_code: no stacks found for '{block_code}'")
         return {"block_code": block_code, "error": "No stacks found for this block code"}
 
     logger.info(f"audit_by_block_code: found {len(matching)} stack(s) for '{block_code}'")
@@ -215,6 +223,8 @@ async def audit_by_block_code(
             return stack, resources
 
     stack_results = await asyncio.gather(*(_fetch(s) for s in matching))
+    total_resources = sum(len(res) for _, res in stack_results)
+    logger.info(f"audit_by_block_code: fetched {total_resources} total resources across {len(matching)} stack(s)")
 
     # 3. Audit each supported resource (with correct region)
     audit_tasks = []
@@ -222,7 +232,13 @@ async def audit_by_block_code(
         for resource in resources:
             audit_tasks.append(_audit_single_resource(aws, resource, stack.stack_name, region=stack.region))
 
+    logger.info(f"audit_by_block_code: starting posture analysis for {len(audit_tasks)} resource(s)")
     resource_audits = await asyncio.gather(*audit_tasks)
+
+    analyzed = [r for r in resource_audits if r.get("audit_status") == "ANALYZED"]
+    unsupported = [r for r in resource_audits if r.get("audit_status") in ("UNSUPPORTED", "NO_ANALYZER")]
+    errored = [r for r in resource_audits if r.get("audit_status") in ("DIMENSION_ERROR", "ANALYSIS_ERROR")]
+    logger.info(f"audit_by_block_code: analysis complete — {len(analyzed)} analyzed, {len(unsupported)} unsupported, {len(errored)} errored")
 
     # 4. Build stack-level summaries
     stack_reports = []
@@ -239,6 +255,7 @@ async def audit_by_block_code(
 
     # 5. Build application-level summary
     app_summary = _build_application_summary(block_code, stack_reports, list(resource_audits))
+    logger.info(f"audit_by_block_code: application score {app_summary.get('application_resilience_score', '?')}/10, {app_summary.get('total_gaps', 0)} total gaps")
 
     return {
         "application_summary": app_summary,

@@ -79,21 +79,38 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
         return
 
     # --- Emit HA classification ---
-    if classification == "ACTIVE-PASSIVE":
-        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-PASSIVE",
-                   "Traffic is routed to a primary endpoint; a standby takes over on failure.",
-                   penalty=0)
-    else:
-        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-ACTIVE",
-                   "Traffic is distributed across multiple healthy endpoints.",
-                   penalty=0)
-
-    # --- Policy-specific gap checks ---
+    # Determine the routing policy type for reasoning
     has_failover = any(r.get("Failover") for r in records)
     has_weight = any(r.get("Weight") is not None for r in records)
     has_multivalue = any(r.get("MultiValueAnswer") for r in records)
     has_latency = any(r.get("Region") for r in records)
     has_geo = any(r.get("GeoLocation") for r in records)
+
+    if classification == "ACTIVE-PASSIVE":
+        if has_failover:
+            reason = f"Failover routing detected (PRIMARY/SECONDARY records). Traffic goes to PRIMARY; SECONDARY activates only on PRIMARY health check failure."
+        elif has_weight:
+            weights = [r.get("Weight", 0) for r in records]
+            reason = f"Weighted routing with weights={weights}. Only one record has non-zero weight; manual failover required."
+        else:
+            reason = "Routing policy indicates active-passive pattern."
+        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-PASSIVE", reason, penalty=0)
+    else:
+        if has_latency:
+            regions = [r.get("Region") for r in records if r.get("Region")]
+            reason = f"Latency-based routing across regions={regions}. Traffic routed to lowest-latency endpoint."
+        elif has_geo:
+            reason = f"Geolocation routing with {len(records)} geo records. Traffic routed by geographic location."
+        elif has_weight:
+            weights = [r.get("Weight", 0) for r in records]
+            reason = f"Weighted routing with weights={weights}. Multiple records with non-zero weights share traffic."
+        elif has_multivalue:
+            reason = f"Multivalue answer routing with {len(records)} records. Multiple IPs returned to clients."
+        else:
+            reason = "Multiple records distribute traffic across endpoints."
+        a.add_gap(f"Failover Configuration: {name}", "ACTIVE-ACTIVE", reason, penalty=0)
+
+    # --- Policy-specific gap checks ---
 
     if has_failover:
         primary = [r for r in records if r.get("Failover") == "PRIMARY"]

@@ -45,24 +45,25 @@ def _classify_failover_config(a: ResilienceAnalyzer):
     read_replicas = a.dim("ReadReplicaIDs", [])
 
     if has_secondary_region:
+        secondary_count = sum(1 for m in gc_members if not m.get("IsWriter"))
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   "Global Database with secondary region; cross-region replication and failover available.",
+                   f"Global Database with {secondary_count} secondary region(s) detected (GlobalClusterMembers has non-writer members). Cross-region replication and failover available.",
                    penalty=0)
     elif cluster_id and cluster_readers >= 2 and multi_az:
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   "Aurora cluster with multiple readers across AZs; reads distributed, writer fails over automatically.",
+                   f"Aurora cluster '{cluster_id}' has {cluster_readers} readers and Multi-AZ=true. Multiple readers actively serve traffic across AZs.",
                    penalty=0)
     elif multi_az:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   "Multi-AZ enabled; synchronous standby in another AZ with automatic failover. Standby does not serve traffic.",
+                   f"Multi-AZ=true but {'cluster has only ' + str(cluster_readers) + ' reader(s)' if cluster_id else 'standalone instance'}. Synchronous standby in another AZ with automatic failover; standby does not serve traffic.",
                    penalty=0)
     elif read_replicas:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   "Read replicas exist but no Multi-AZ; replicas serve reads but writer failover requires manual promotion.",
+                   f"Multi-AZ=false but {len(read_replicas)} read replica(s) exist. Replicas serve reads but writer failover requires manual promotion.",
                    penalty=0)
     else:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   "Single instance with no Multi-AZ and no replicas; single point of failure.",
+                   f"Multi-AZ=false, no read replicas, no Global Database. Single point of failure.",
                    penalty=0)
 
 

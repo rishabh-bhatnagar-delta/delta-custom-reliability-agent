@@ -48,7 +48,7 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
     """
     if not asg_detail:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   "Standalone instance with no Auto Scaling Group; no redundancy or automatic recovery.",
+                   "No ASG found (AutoScalingGroup=None). Standalone instance with no redundancy or automatic recovery.",
                    penalty=0)
         return
 
@@ -61,27 +61,27 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
 
     if desired == 0 and min_size == 0:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   "ASG exists but DesiredCapacity and MinSize are 0; nothing is running or standing by.",
+                   f"ASG '{asg_detail.get('Name', '?')}' has DesiredCapacity=0, MinSize=0. Nothing is running or standing by.",
                    penalty=0)
     elif desired == 1:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   "Single instance running; ASG replaces on failure but with downtime during replacement.",
+                   f"ASG DesiredCapacity=1, AZs={azs}. Single instance running; ASG replaces on failure but with downtime.",
                    penalty=0)
     elif len(azs) <= 1:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   "Multiple instances but all in a single AZ; AZ failure causes full outage.",
+                   f"ASG DesiredCapacity={desired} but only 1 AZ ({azs}). AZ failure causes full outage.",
                    penalty=0)
     elif not tg_arns:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   "Multi-AZ instances but no load balancer; traffic is not distributed across them.",
+                   f"ASG DesiredCapacity={desired}, AZs={azs} (multi-AZ) but TargetGroupARNs is empty. No load balancer distributes traffic.",
                    penalty=0)
     elif healthy_targets < 2:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"Only {healthy_targets} healthy target(s) behind the load balancer; not truly Active-Active.",
+                   f"ASG DesiredCapacity={desired}, multi-AZ, has TG but only {healthy_targets} healthy target(s). Not truly Active-Active.",
                    penalty=0)
     else:
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   "Traffic distributed across multiple healthy instances in multiple AZs.",
+                   f"ASG DesiredCapacity={desired}, AZs={azs}, {healthy_targets} healthy targets behind load balancer. Traffic distributed across multiple healthy instances in multiple AZs.",
                    penalty=0)
 
 
