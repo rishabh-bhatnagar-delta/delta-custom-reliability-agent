@@ -124,7 +124,7 @@ def _build_application_summary(
     """Build an application-level summary from all resource audits."""
     analyzed = [r for r in resource_audits if r.get("audit_status") == "ANALYZED"]
     skipped = [r for r in resource_audits if r.get("audit_status") == "SKIPPED"]
-    unsupported = [r for r in resource_audits if r.get("audit_status") == "UNSUPPORTED"]
+    unsupported = [r for r in resource_audits if r.get("audit_status") in ("UNSUPPORTED", "NO_ANALYZER")]
     errors = [r for r in resource_audits if r.get("audit_status") in ("DIMENSION_ERROR", "ANALYSIS_ERROR")]
 
     # Aggregate gaps and recommendations
