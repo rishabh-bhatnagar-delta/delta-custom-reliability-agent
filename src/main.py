@@ -12,6 +12,7 @@ from src.core.aws_client import AWSClientProvider
 from src.core.constants import MAX_CONCURRENCY, LOG_LEVEL, US_REGIONS
 from src.core.exceptions import MissingToolParam
 from src.models.resources import CloudFormationStack
+from src.models.tool import ToolNames
 from src.tools.fetcher import fetch_resources_in_stack, clear_cache, fetch_stacks_multi_region
 from src.tools.audit_orchestrator import audit_by_block_code, audit_by_stack
 from src.tools.report_generator import generate_markdown_report
@@ -55,7 +56,7 @@ def _error(msg: str) -> list[types.TextContent]:
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
-            name="resource_fetcher",
+            name=ToolNames.RESOURCE_FETCHER,
             description=(
                 "Scans all CloudFormation stacks and returns a list of deployed "
                 "physical resources (API Gateway, RDS, DynamoDB, Lambda, S3, etc). "
@@ -94,7 +95,7 @@ async def list_tools() -> list[types.Tool]:
         #     },
         # ),
         types.Tool(
-            name="resource_fetcher_by_stack_name",
+            name=ToolNames.RESOURCE_FETCHER_BY_STACK_NAME,
             description=(
                 "Returns all resources deployed in a specific CloudFormation stack. "
                 "Requires the stack name as input. "
@@ -141,7 +142,7 @@ async def list_tools() -> list[types.Tool]:
         #     },
         # ),
         types.Tool(
-            name="resource_fetcher_by_block_code",
+            name=ToolNames.RESOURCE_FETCHER_BY_BLOCK_CODE,
             description=(
                 "Returns all CloudFormation stacks and their resources that belong to a specific block code. "
                 "Use this to audit all infrastructure owned by a particular team or application."
@@ -162,7 +163,7 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="generate_audit_report",
+            name=ToolNames.GENERATE_AUDIT_REPORT,
             description=(
                 "Runs a full resilience audit for a block code and generates a detailed Markdown report "
                 "using AI. The report includes executive summary, per-resource analysis with evidence, "
@@ -181,7 +182,7 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="generate_audit_report_by_stack_name",
+            name=ToolNames.GENERATE_AUDIT_REPORT_BY_STACK_NAME,
             description=(
                 "Runs a full resilience audit for a single CloudFormation stack (no block code required) "
                 "and generates a detailed Markdown report. Useful for stacks without a block code tag."
@@ -363,11 +364,11 @@ async def _handle_generate_audit_report_by_stack(arguments: dict) -> list[types.
 # --- Tool Router ---
 
 _TOOL_HANDLERS = {
-    "resource_fetcher": _handle_resource_fetcher,
-    "resource_fetcher_by_stack_name": _handle_resource_fetcher_by_stacks,
-    "resource_fetcher_by_block_code": _handle_resource_fetcher_by_block_code,
-    "generate_audit_report": _handle_generate_audit_report,
-    "generate_audit_report_by_stack_name": _handle_generate_audit_report_by_stack,
+    ToolNames.RESOURCE_FETCHER: _handle_resource_fetcher,
+    ToolNames.RESOURCE_FETCHER_BY_STACK_NAME: _handle_resource_fetcher_by_stacks,
+    ToolNames.RESOURCE_FETCHER_BY_BLOCK_CODE: _handle_resource_fetcher_by_block_code,
+    ToolNames.GENERATE_AUDIT_REPORT: _handle_generate_audit_report,
+    ToolNames.GENERATE_AUDIT_REPORT_BY_STACK_NAME: _handle_generate_audit_report_by_stack,
 }
 
 
