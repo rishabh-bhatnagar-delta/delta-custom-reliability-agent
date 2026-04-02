@@ -4,7 +4,7 @@ from src.models.resiliency_report import ResourceResilienceOutput
 from src.tools.posture_analyzer.base import ResilienceAnalyzer
 
 
-def get_dynamodb_resilience_report(dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
+def get_dynamodb_resilience_report(table_name: str, dimensions: List[Dict[str, Any]]) -> ResourceResilienceOutput:
     """Rule-based resilience evaluation for DynamoDB."""
     dim_map = {d["name"]: d.get("value") for d in dimensions}
     resource_name = dim_map.get("ResourceName", "Unknown DynamoDB Table")
