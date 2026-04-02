@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import json
 import logging
 import time
@@ -13,19 +12,9 @@ from src.core.aws_client import AWSClientProvider
 from src.core.constants import MAX_CONCURRENCY, LOG_LEVEL, US_REGIONS
 from src.core.exceptions import MissingToolParam
 from src.models.resources import CloudFormationStack
-from src.tools.auditor.auditor import get_resource_dimensions
-from src.tools.fetcher import fetch_only_stacks, fetch_resources_in_stack, clear_cache, fetch_stacks_multi_region
-from src.tools.posture_analyzer.api_gateway import get_apigw_resilience_report
-from src.tools.posture_analyzer.ec2 import get_ec2_resilience_report
-from src.tools.posture_analyzer.rds import get_rds_resilience_report
-from src.tools.posture_analyzer.route53 import get_route53_resilience_report
-from src.tools.posture_analyzer.s3 import get_s3_resilience_report
-from src.tools.posture_analyzer.dynamodb import get_dynamodb_resilience_report
+from src.tools.fetcher import fetch_resources_in_stack, clear_cache, fetch_stacks_multi_region
 from src.tools.audit_orchestrator import audit_by_block_code, audit_by_stack
 from src.tools.report_generator import generate_markdown_report
-
-_lambda_module = importlib.import_module("src.tools.posture_analyzer.lambda")
-get_lambda_resilience_report = _lambda_module.get_lambda_resilience_report
 
 # --- Logging Setup ---
 
@@ -83,29 +72,29 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
+        # types.Tool(
+        #     name="get_resource_dimensions",
+        #     description=(
+        #         "Given a resource's physical ID and AWS resource type, returns "
+        #         "configuration dimensions used to evaluate reliability posture."
+        #     ),
+        #     inputSchema={
+        #         "type": "object",
+        #         "properties": {
+        #             "resource_id": {
+        #                 "type": "string",
+        #                 "description": "The physical resource ID or ARN.",
+        #             },
+        #             "resource_type": {
+        #                 "type": "string",
+        #                 "description": "AWS resource type (e.g. AWS::RDS::DBInstance).",
+        #             },
+        #         },
+        #         "required": ["resource_id", "resource_type"],
+        #     },
+        # ),
         types.Tool(
-            name="get_resource_dimensions",
-            description=(
-                "Given a resource's physical ID and AWS resource type, returns "
-                "configuration dimensions used to evaluate reliability posture."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "resource_id": {
-                        "type": "string",
-                        "description": "The physical resource ID or ARN.",
-                    },
-                    "resource_type": {
-                        "type": "string",
-                        "description": "AWS resource type (e.g. AWS::RDS::DBInstance).",
-                    },
-                },
-                "required": ["resource_id", "resource_type"],
-            },
-        ),
-        types.Tool(
-            name="resource_fetcher_by_stacks",
+            name="resource_fetcher_by_stack_name",
             description=(
                 "Returns all resources deployed in a specific CloudFormation stack. "
                 "Requires the stack name as input. "
@@ -126,31 +115,31 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["stack_name"],
             },
         ),
-        types.Tool(
-            name="analyze_resilience",
-            description=(
-                "Evaluates a resource's configuration against AWS Well-Architected "
-                "Reliability standards. Supports API Gateway, Lambda, RDS, and S3. "
-                "Requires the resource dimensions from get_resource_dimensions as input."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dimensions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "value": {},
-                            },
-                        },
-                        "description": "List of dimension name/value pairs from get_resource_dimensions. Must include ResourceName and ResourceType.",
-                    },
-                },
-                "required": ["dimensions"],
-            },
-        ),
+        # types.Tool(
+        #     name="analyze_resilience",
+        #     description=(
+        #         "Evaluates a resource's configuration against AWS Well-Architected "
+        #         "Reliability standards. Supports API Gateway, Lambda, RDS, and S3. "
+        #         "Requires the resource dimensions from get_resource_dimensions as input."
+        #     ),
+        #     inputSchema={
+        #         "type": "object",
+        #         "properties": {
+        #             "dimensions": {
+        #                 "type": "array",
+        #                 "items": {
+        #                     "type": "object",
+        #                     "properties": {
+        #                         "name": {"type": "string"},
+        #                         "value": {},
+        #                     },
+        #                 },
+        #                 "description": "List of dimension name/value pairs from get_resource_dimensions. Must include ResourceName and ResourceType.",
+        #             },
+        #         },
+        #         "required": ["dimensions"],
+        #     },
+        # ),
         types.Tool(
             name="resource_fetcher_by_block_code",
             description=(
@@ -167,25 +156,6 @@ async def list_tools() -> list[types.Tool]:
                     "force_refresh": {
                         "type": "boolean",
                         "description": "Bypass cache and fetch fresh data from AWS. Default: false.",
-                    },
-                },
-                "required": ["block_code"],
-            },
-        ),
-        types.Tool(
-            name="audit_by_block_code",
-            description=(
-                "Performs a full resilience audit for all infrastructure owned by a block code. "
-                "Fetches all stacks, gets dimensions for every supported resource, runs posture analysis, "
-                "and returns a detailed report with per-resource evidence, gaps, recommendations, "
-                "and an application-level summary."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "block_code": {
-                        "type": "string",
-                        "description": "The block code to audit (e.g. ITSSREMPSM).",
                     },
                 },
                 "required": ["block_code"],
@@ -211,7 +181,7 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
-            name="generate_audit_report_by_stack",
+            name="generate_audit_report_by_stack_name",
             description=(
                 "Runs a full resilience audit for a single CloudFormation stack (no block code required) "
                 "and generates a detailed Markdown report. Useful for stacks without a block code tag."
@@ -225,29 +195,6 @@ async def list_tools() -> list[types.Tool]:
                     },
                 },
                 "required": ["stack_name"],
-            },
-        ),
-        types.Tool(
-            name="analyze_resource_resilience",
-            description=(
-                "End-to-end resilience analysis for a single resource. "
-                "Fetches configuration dimensions and immediately evaluates "
-                "reliability posture against AWS Well-Architected standards. "
-                "Returns gaps, recommendations, and remediation commands."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "resource_id": {
-                        "type": "string",
-                        "description": "The physical resource ID or ARN.",
-                    },
-                    "resource_type": {
-                        "type": "string",
-                        "description": "AWS resource type (e.g. AWS::RDS::DBInstance, AWS::S3::Bucket).",
-                    },
-                },
-                "required": ["resource_id", "resource_type"],
             },
         ),
     ]
@@ -281,7 +228,8 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
             provider = AWSClientProvider(region=stack.region) if stack.region else aws
             resources = await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh)
         completed["count"] += 1
-        logger.info(f"resource_fetcher: [{completed['count']}/{total}] '{stack.stack_name}' ({stack.region}) -> {len(resources)} resource(s)")
+        logger.info(
+            f"resource_fetcher: [{completed['count']}/{total}] '{stack.stack_name}' ({stack.region}) -> {len(resources)} resource(s)")
         return resources
 
     all_resources = await asyncio.gather(*(_fetch_with_progress(s) for s in stacks_list))
@@ -301,7 +249,6 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
     _fc.put("results", "resource_fetcher_all", dict(grouped))
 
     return _text(json.dumps(grouped, indent=2))
-
 
 
 async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.TextContent]:
@@ -339,65 +286,6 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
     result = {key: [stack_obj.model_dump()]}
     _fc.put("results", f"stack_{stack_name}", result)
     return _text(json.dumps(result, indent=2))
-
-
-async def _handle_get_resource_dimensions(arguments: dict) -> list[types.TextContent]:
-    resource_id = arguments.get("resource_id")
-    resource_type = arguments.get("resource_type")
-    if not resource_id:
-        raise MissingToolParam("Missing resource_id")
-    if not resource_type:
-        raise MissingToolParam("Missing resource_type")
-
-    logger.info(f"get_resource_dimensions: '{resource_id}' ({resource_type})")
-    results = await get_resource_dimensions(aws, resource_id, resource_type)
-    logger.info(f"get_resource_dimensions: returned {len(results) if isinstance(results, list) else 1} dimension(s)")
-    return _text(_serialize(results))
-
-
-async def _handle_analyze_resilience(arguments: dict) -> list[types.TextContent]:
-    dimensions = arguments.get("dimensions")
-    if not dimensions:
-        raise MissingToolParam("Missing dimensions")
-
-    print(dimensions)
-    dim_map = {d["name"]: d.get("value") for d in dimensions}
-    resource_name = dim_map.get("ResourceName")
-    resource_type = dim_map.get("ResourceType", "")
-
-    if not resource_name:
-        raise MissingToolParam("Dimensions must include ResourceName")
-
-    logger.info(f"analyze_resilience: '{resource_name}' ({resource_type})")
-
-    analyzers = {
-        "ApiGateway": get_apigw_resilience_report,
-        "RestApi": get_apigw_resilience_report,
-        "Lambda": lambda name, dims: get_lambda_resilience_report(name, dims),
-        "Function": lambda name, dims: get_lambda_resilience_report(name, dims),
-        "DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
-        "DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
-        "RDS": lambda name, dims: get_rds_resilience_report(name, dims),
-        "S3": lambda name, dims: get_s3_resilience_report(name, dims),
-        "Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
-        "DynamoDB": lambda name, dims: get_dynamodb_resilience_report(dims),
-        "Table": lambda name, dims: get_dynamodb_resilience_report(dims),
-        "HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
-        "Route53": lambda name, dims: get_route53_resilience_report(name, dims),
-        "EC2::Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
-        "EC2": lambda name, dims: get_ec2_resilience_report(name, dims),
-    }
-
-    for key, analyzer in analyzers.items():
-        if key in resource_type:
-            if key in ("ApiGateway", "RestApi"):
-                result = analyzer(dimensions)
-            else:
-                result = analyzer(resource_name, dimensions)
-            logger.info(f"analyze_resilience: completed for '{resource_name}'")
-            return _text(_serialize(result))
-
-    raise ValueError(f"Unsupported resource type: {resource_type}")
 
 
 async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.TextContent]:
@@ -448,17 +336,6 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
     return _text(json.dumps(output, indent=2))
 
 
-async def _handle_audit_by_block_code(arguments: dict) -> list[types.TextContent]:
-    block_code = arguments.get("block_code")
-    if not block_code:
-        raise MissingToolParam("Missing block_code")
-
-    logger.info(f"audit_by_block_code: starting full audit for '{block_code}'")
-    report = await audit_by_block_code(aws, block_code, max_concurrency=MAX_CONCURRENCY)
-    logger.info(f"audit_by_block_code: completed for '{block_code}'")
-    return _text(json.dumps(report, indent=2))
-
-
 async def _handle_generate_audit_report(arguments: dict) -> list[types.TextContent]:
     block_code = arguments.get("block_code")
     if not block_code:
@@ -483,54 +360,14 @@ async def _handle_generate_audit_report_by_stack(arguments: dict) -> list[types.
     return _text(markdown)
 
 
-async def _handle_analyze_resource_resilience(arguments: dict) -> list[types.TextContent]:
-    resource_id = arguments.get("resource_id")
-    resource_type = arguments.get("resource_type")
-    if not resource_id:
-        raise MissingToolParam("Missing resource_id")
-    if not resource_type:
-        raise MissingToolParam("Missing resource_type")
-
-    logger.info(f"analyze_resource_resilience: '{resource_id}' ({resource_type})")
-
-    # Step 1: Fetch dimensions
-    dimensions = await get_resource_dimensions(aws, resource_id, resource_type)
-    dims_list = [d.model_dump() for d in dimensions]
-    logger.info(f"analyze_resource_resilience: fetched {len(dims_list)} dimension(s)")
-
-    # Step 2: Find the matching analyzer
-    analyzers = {
-        "ApiGateway::RestApi": lambda name, dims: get_apigw_resilience_report(dims),
-        "RDS::DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
-        "RDS::DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
-        "Lambda::Function": lambda name, dims: get_lambda_resilience_report(name, dims),
-        "S3::Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
-        "DynamoDB::Table": lambda name, dims: get_dynamodb_resilience_report(dims),
-        "Route53::HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
-        "EC2::Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
-    }
-
-    for key, analyzer in analyzers.items():
-        if key in resource_type:
-            result = analyzer(resource_id, dims_list)
-            logger.info(f"analyze_resource_resilience: completed for '{resource_id}'")
-            return _text(_serialize(result))
-
-    raise ValueError(f"Unsupported resource type for resilience analysis: {resource_type}")
-
-
 # --- Tool Router ---
 
 _TOOL_HANDLERS = {
     "resource_fetcher": _handle_resource_fetcher,
-    "resource_fetcher_by_stacks": _handle_resource_fetcher_by_stacks,
+    "resource_fetcher_by_stack_name": _handle_resource_fetcher_by_stacks,
     "resource_fetcher_by_block_code": _handle_resource_fetcher_by_block_code,
-    "get_resource_dimensions": _handle_get_resource_dimensions,
-    "analyze_resilience": _handle_analyze_resilience,
-    "audit_by_block_code": _handle_audit_by_block_code,
     "generate_audit_report": _handle_generate_audit_report,
-    "generate_audit_report_by_stack": _handle_generate_audit_report_by_stack,
-    "analyze_resource_resilience": _handle_analyze_resource_resilience,
+    "generate_audit_report_by_stack_name": _handle_generate_audit_report_by_stack,
 }
 
 
