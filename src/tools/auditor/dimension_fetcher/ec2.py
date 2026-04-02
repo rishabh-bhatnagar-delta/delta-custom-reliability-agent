@@ -138,6 +138,12 @@ class EC2DimensionFetcher(DimensionFetcher):
         dimensions.append(DimensionOutput(name='AutoScalingGroup', value=asg_name))
         dimensions.append(DimensionOutput(name='ASGDetail', value=asg_detail))
 
+        # CloudWatch metrics for ASG instances (used to verify active-active traffic distribution)
+        asg_instance_metrics = None
+        if asg_detail and asg_detail.get('DesiredCapacity', 0) >= 2 and asg_detail.get('TargetGroupARNs'):
+            asg_instance_metrics = self._fetch_asg_instance_metrics(asg_client, asg_name)
+        dimensions.append(DimensionOutput(name='ASGInstanceMetrics', value=asg_instance_metrics))
+
         # If no ASG, check if instance is directly in a target group
         if not asg_name:
             try:
@@ -172,6 +178,56 @@ class EC2DimensionFetcher(DimensionFetcher):
             dimensions.append(DimensionOutput(name='HasBackup', value=False))
 
         return dimensions
+
+    def _fetch_asg_instance_metrics(self, asg_client, asg_name: str) -> list:
+        """Fetch CloudWatch CPUUtilization and NetworkIn for each instance in the ASG.
+
+        Returns a list of dicts with instance_id, avg_cpu, and avg_network_in
+        over the last 1 hour (5-min periods).
+        """
+        from datetime import datetime, timedelta
+
+        cw_client = self.get_aws_client_provider().get_client_by_service_name('cloudwatch')
+
+        # Get all instance IDs in the ASG
+        try:
+            asg_desc = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+            instances = asg_desc.get('AutoScalingGroups', [{}])[0].get('Instances', [])
+            instance_ids = [i['InstanceId'] for i in instances if i.get('LifecycleState') == 'InService']
+        except ClientError:
+            return []
+
+        if not instance_ids:
+            return []
+
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(hours=1)
+        period = 300  # 5-minute granularity
+
+        results = []
+        for iid in instance_ids:
+            metrics = {'instance_id': iid, 'avg_cpu': None, 'avg_network_in': None}
+            for metric_name, key in [('CPUUtilization', 'avg_cpu'), ('NetworkIn', 'avg_network_in')]:
+                try:
+                    resp = cw_client.get_metric_statistics(
+                        Namespace='AWS/EC2',
+                        MetricName=metric_name,
+                        Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
+                        StartTime=start_time,
+                        EndTime=end_time,
+                        Period=period,
+                        Statistics=['Average'],
+                    )
+                    datapoints = resp.get('Datapoints', [])
+                    if datapoints:
+                        metrics[key] = round(
+                            sum(dp['Average'] for dp in datapoints) / len(datapoints), 2
+                        )
+                except ClientError:
+                    pass
+            results.append(metrics)
+        return results
+
 
 
 if __name__ == "__main__":

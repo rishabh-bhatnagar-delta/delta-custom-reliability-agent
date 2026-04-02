@@ -18,6 +18,7 @@ def get_ec2_resilience_report(instance_id: str, dimensions: List[Dict[str, Any]]
     _analyze_management(a, asg_name, asg_detail)
     _analyze_capacity(a, asg_name, asg_detail)
     _analyze_traffic(a, asg_detail)
+    _analyze_active_active_metrics(a, asg_detail)
     _analyze_security_and_backup(a, instance_id)
 
     return a.build(f"EC2 '{instance_id}'")
@@ -138,6 +139,66 @@ def _analyze_traffic(a: ResilienceAnalyzer, asg_detail: dict):
             a.add_gap("Traffic", "STANDALONE",
                        "Instance is not in any target group; no load-balanced traffic.",
                        recommendation="Register the instance in a target group behind a load balancer.")
+
+
+def _analyze_active_active_metrics(a: ResilienceAnalyzer, asg_detail: dict):
+    """When classified as ACTIVE-ACTIVE, verify via CloudWatch that all instances are actually receiving traffic."""
+    if not asg_detail:
+        return
+
+    metrics = a.dim("ASGInstanceMetrics")
+    if not metrics:
+        return
+
+    # Only relevant when we have multi-instance, multi-AZ, load-balanced setup
+    desired = asg_detail.get("DesiredCapacity", 0)
+    azs = asg_detail.get("AvailabilityZones", [])
+    tg_arns = asg_detail.get("TargetGroupARNs", [])
+    if desired < 2 or len(azs) <= 1 or not tg_arns:
+        return
+
+    # Check for instances with no network traffic (idle behind LB)
+    idle_instances = []
+    no_data_instances = []
+    for m in metrics:
+        iid = m.get("instance_id", "?")
+        avg_net = m.get("avg_network_in")
+        avg_cpu = m.get("avg_cpu")
+
+        if avg_net is None and avg_cpu is None:
+            no_data_instances.append(iid)
+        elif avg_net is not None and avg_net < 1000:
+            # Less than 1 KB/s average network-in over the last hour — effectively idle
+            idle_instances.append(iid)
+
+    if no_data_instances:
+        a.add_gap(
+            "Active-Active Metrics", "NO CLOUDWATCH DATA",
+            f"No CloudWatch metrics available for instance(s) {no_data_instances}. "
+            "Cannot confirm these instances are actively serving traffic.",
+            recommendation="Enable detailed monitoring or verify instances are healthy and receiving traffic.",
+        )
+
+    if idle_instances:
+        a.add_gap(
+            "Active-Active Metrics", "IDLE INSTANCES DETECTED",
+            f"Instance(s) {idle_instances} show near-zero NetworkIn (<1 KB/s avg over 1h) despite being behind a load balancer. "
+            "Traffic may not be distributed evenly — this is Active-Active in config but not in practice.",
+            recommendation="Investigate load balancer routing rules, health check configuration, and target group weights "
+                           "to ensure traffic reaches all instances.",
+        )
+
+    if not idle_instances and not no_data_instances:
+        # All instances are receiving traffic — confirm healthy active-active
+        instance_summary = ", ".join(
+            f"{m['instance_id']}(cpu={m.get('avg_cpu', '?')}%, net_in={m.get('avg_network_in', '?')}B/s)"
+            for m in metrics
+        )
+        a.add_gap(
+            "Active-Active Metrics", "VERIFIED",
+            f"All {len(metrics)} instances show active CloudWatch metrics (CPU and NetworkIn) over the last hour: {instance_summary}. "
+            "Traffic is being distributed across instances.",
+        )
 
 
 def _analyze_security_and_backup(a: ResilienceAnalyzer, instance_id: str):
