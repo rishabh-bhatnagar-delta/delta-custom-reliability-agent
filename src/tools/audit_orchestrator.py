@@ -15,6 +15,7 @@ from src.tools.posture_analyzer.route53 import get_route53_resilience_report
 from src.tools.posture_analyzer.s3 import get_s3_resilience_report
 
 import importlib
+
 _lambda_mod = importlib.import_module("src.tools.posture_analyzer.lambda")
 get_lambda_resilience_report = _lambda_mod.get_lambda_resilience_report
 
@@ -23,13 +24,13 @@ logger = logging.getLogger(__name__)
 # Maps resource type substring to analyzer function
 _ANALYZERS = {
     "ApiGateway::RestApi": lambda name, dims: get_apigw_resilience_report(dims),
-    "RDS::DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
-    "RDS::DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
-    "Lambda::Function": lambda name, dims: get_lambda_resilience_report(name, dims),
-    "S3::Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
-    "DynamoDB::Table": lambda name, dims: get_dynamodb_resilience_report(dims),
-    "Route53::HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
-    "EC2::Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
+    "RDS::DBInstance": get_rds_resilience_report,
+    "RDS::DBCluster": get_rds_resilience_report,
+    "Lambda::Function": get_lambda_resilience_report,
+    "S3::Bucket": get_s3_resilience_report,
+    "DynamoDB::Table": get_dynamodb_resilience_report,
+    "Route53::HostedZone": get_route53_resilience_report,
+    "EC2::Instance": get_ec2_resilience_report,
 }
 
 
@@ -51,10 +52,10 @@ def _get_analyzer(resource_type: str):
 
 
 async def _audit_single_resource(
-    aws: AWSClientProvider,
-    resource: StackResource,
-    stack_name: str,
-    region: str = None,
+        aws: AWSClientProvider,
+        resource: StackResource,
+        stack_name: str,
+        region: str = None,
 ) -> Dict[str, Any]:
     """Fetch dimensions and run posture analysis for one resource."""
     # Use region-specific provider if region differs
@@ -116,9 +117,9 @@ async def _audit_single_resource(
 
 
 def _build_application_summary(
-    block_code: str,
-    stack_reports: List[Dict],
-    resource_audits: List[Dict],
+        block_code: str,
+        stack_reports: List[Dict],
+        resource_audits: List[Dict],
 ) -> Dict[str, Any]:
     """Build an application-level summary from all resource audits."""
     analyzed = [r for r in resource_audits if r.get("audit_status") == "ANALYZED"]
@@ -151,7 +152,8 @@ def _build_application_summary(
 
     # Group gaps by severity (based on status keywords)
     critical_gaps = [g for g in all_gaps if any(k in g["gap_status"].upper() for k in
-                     ["DISABLED", "NONE", "NO ", "MANUAL", "SPOF", "UNENCRYPTED", "NO HEALTH CHECK"])]
+                                                ["DISABLED", "NONE", "NO ", "MANUAL", "SPOF", "UNENCRYPTED",
+                                                 "NO HEALTH CHECK"])]
     warning_gaps = [g for g in all_gaps if g not in critical_gaps]
 
     # Resource type breakdown
@@ -184,10 +186,10 @@ def _build_application_summary(
 
 
 async def audit_by_block_code(
-    aws: AWSClientProvider,
-    block_code: str,
-    max_concurrency: int = 5,
-    regions: List[str] = None,
+        aws: AWSClientProvider,
+        block_code: str,
+        max_concurrency: int = 5,
+        regions: List[str] = None,
 ) -> Dict[str, Any]:
     """Full audit pipeline: fetch stacks → dimensions → posture analysis → report."""
     from src.core.constants import US_REGIONS
@@ -229,7 +231,8 @@ async def audit_by_block_code(
     analyzed = [r for r in resource_audits if r.get("audit_status") == "ANALYZED"]
     unsupported = [r for r in resource_audits if r.get("audit_status") in ("UNSUPPORTED", "NO_ANALYZER")]
     errored = [r for r in resource_audits if r.get("audit_status") in ("DIMENSION_ERROR", "ANALYSIS_ERROR")]
-    logger.info(f"audit_by_block_code: analysis complete — {len(analyzed)} analyzed, {len(unsupported)} unsupported, {len(errored)} errored")
+    logger.info(
+        f"audit_by_block_code: analysis complete — {len(analyzed)} analyzed, {len(unsupported)} unsupported, {len(errored)} errored")
 
     # 4. Build stack-level summaries
     stack_reports = []
@@ -255,11 +258,12 @@ async def audit_by_block_code(
         "skipped_resources": [r for r in resource_audits if r.get("audit_status") != "ANALYZED"],
     }
 
+
 async def audit_by_stack(
-    aws: AWSClientProvider,
-    stack_name: str,
-    max_concurrency: int = 5,
-    regions: List[str] = None,
+        aws: AWSClientProvider,
+        stack_name: str,
+        max_concurrency: int = 5,
+        regions: List[str] = None,
 ) -> Dict[str, Any]:
     """Full audit pipeline for a single stack (no block code required)."""
     from src.core.constants import US_REGIONS
