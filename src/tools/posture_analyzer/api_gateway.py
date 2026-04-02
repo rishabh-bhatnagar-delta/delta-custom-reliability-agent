@@ -13,28 +13,27 @@ def get_apigw_resilience_report(dimensions: List[Dict[str, Any]]) -> ResourceRes
     if not a.dim("MultiRegion", False):
         a.add_gap("Multi-Region Deployment", "REGIONAL ONLY",
                    "API is deployed in a single region; regional outage causes full unavailability.",
-                   penalty=1, recommendation="Consider deploying API in multiple regions with Route 53 failover.")
+                   recommendation="Consider deploying API in multiple regions with Route 53 failover.")
 
     if a.dim("StageCount", 0) == 0:
         a.add_gap("API Stages", "NONE",
-                   "No stages deployed; API is not serving traffic.",
-                   penalty=1)
+                   "No stages deployed; API is not serving traffic.")
 
     if a.dim("CacheEnabledStages", 0) == 0:
         a.add_gap("API Caching", "DISABLED",
                    "No caching configured; backend receives all requests, increasing latency and load.",
-                   penalty=2, recommendation="Enable API caching to reduce backend load and improve response times.")
+                   recommendation="Enable API caching to reduce backend load and improve response times.")
 
     if a.dim("ThrottlingStages", 0) == 0:
         a.add_gap("Throttling Configuration", "NOT CONFIGURED",
                    "No throttling; API is vulnerable to traffic spikes and abuse.",
-                   penalty=2, recommendation="Configure method-level throttling to protect backend services.",
+                   recommendation="Configure method-level throttling to protect backend services.",
                    cli=f"aws apigateway update-stage --rest-api-id {resource_name} --stage-name prod --patch-operations op=replace,path=/~1/throttling/rateLimit,value=1000")
 
     if not a.dim("TracingStages", []):
         a.add_gap("X-Ray Tracing", "DISABLED",
                    "No distributed tracing; difficult to diagnose latency and errors.",
-                   penalty=1, recommendation="Enable X-Ray tracing for observability and debugging.",
+                   recommendation="Enable X-Ray tracing for observability and debugging.",
                    cli=f"aws apigateway update-stage --rest-api-id {resource_name} --stage-name prod --patch-operations op=replace,path=/tracingEnabled,value=true")
 
     return a.build(f"API '{resource_name}'")

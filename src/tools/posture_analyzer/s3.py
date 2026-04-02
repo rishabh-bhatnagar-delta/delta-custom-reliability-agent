@@ -11,18 +11,18 @@ def get_s3_resilience_report(bucket_name: str, dimensions: List[Dict[str, Any]])
     if a.dim("Versioning", "Disabled") != "Enabled":
         a.add_gap("Versioning", "DISABLED",
                    "Overwritten or deleted objects cannot be recovered.",
-                   penalty=2, recommendation="Enable versioning to protect against accidental deletes and overwrites.",
+                   recommendation="Enable versioning to protect against accidental deletes and overwrites.",
                    cli=f"aws s3api put-bucket-versioning --bucket {bucket_name} --versioning-configuration Status=Enabled")
 
     if not a.dim("MFA Delete", False):
         a.add_gap("MFA Delete", "DISABLED",
                    "Versioned objects can be permanently deleted without MFA.",
-                   penalty=1, recommendation="Enable MFA Delete for an extra layer of protection on version deletes.")
+                   recommendation="Enable MFA Delete for an extra layer of protection on version deletes.")
 
     if not a.dim("MultiRegion", False):
         a.add_gap("Cross-Region Replication", "NOT CONFIGURED",
                    "No multi-region redundancy; regional outage risks data unavailability.",
-                   penalty=2, recommendation="Configure cross-region replication (CRR) for disaster recovery.")
+                   recommendation="Configure cross-region replication (CRR) for disaster recovery.")
 
     if not a.dim("ObjectLock", False):
         a.add_gap("Object Lock", "DISABLED",
@@ -32,12 +32,12 @@ def get_s3_resilience_report(bucket_name: str, dimensions: List[Dict[str, Any]])
     if not a.dim("ScheduledBackup", False):
         a.add_gap("Scheduled Backup (AWS Backup)", "NOT CONFIGURED",
                    "No scheduled backups via AWS Backup; relies solely on versioning.",
-                   penalty=1, recommendation="Configure AWS Backup for scheduled S3 backups.")
+                   recommendation="Configure AWS Backup for scheduled S3 backups.")
 
     if not a.dim("PointInTimeRecovery", False):
         a.add_gap("Point-in-Time Recovery", "DISABLED",
                    "Cannot restore bucket to a specific point in time.",
-                   penalty=1, recommendation="Enable versioning + AWS Backup for point-in-time recovery capability.")
+                   recommendation="Enable versioning + AWS Backup for point-in-time recovery capability.")
 
     replication = a.dim("DataReplication", [])
     if isinstance(replication, list) and replication:

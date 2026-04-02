@@ -104,9 +104,8 @@ async def _audit_single_resource(
         report = analyzer(resource.physical_id, dims_list)
         result["audit_status"] = "ANALYZED"
         result["resilience_report"] = report.model_dump()
-        score = report.report.overall_resilience_score if report.report else "?"
         gaps = len(report.report.resilience_gaps) if report.report else 0
-        logger.info(f"audit: '{resource.physical_id}' ({resource.resource_type}) -> score={score}/10, gaps={gaps}")
+        logger.info(f"audit: '{resource.physical_id}' ({resource.resource_type}) -> gaps={gaps}")
     except Exception as e:
         logger.error(f"audit: posture analysis failed for '{resource.physical_id}': {e}")
         result["audit_status"] = "ANALYSIS_ERROR"
@@ -127,16 +126,13 @@ def _build_application_summary(
     unsupported = [r for r in resource_audits if r.get("audit_status") == "UNSUPPORTED"]
     errors = [r for r in resource_audits if r.get("audit_status") in ("DIMENSION_ERROR", "ANALYSIS_ERROR")]
 
-    # Aggregate scores
-    scores = []
+    # Aggregate gaps and recommendations
     all_gaps = []
     all_recommendations = set()
     all_cli_commands = []
 
     for r in analyzed:
         report = r.get("resilience_report", {}).get("report", {})
-        score = report.get("overall_resilience_score", 0)
-        scores.append(score)
 
         for gap in report.get("resilience_gaps", []):
             all_gaps.append({
@@ -152,9 +148,6 @@ def _build_application_summary(
             all_recommendations.add(rec)
 
         all_cli_commands.extend(r.get("resilience_report", {}).get("aws_commands_to_fix", []))
-
-    avg_score = round(sum(scores) / len(scores), 1) if scores else 0
-    min_score = min(scores) if scores else 0
 
     # Group gaps by severity (based on status keywords)
     critical_gaps = [g for g in all_gaps if any(k in g["gap_status"].upper() for k in
@@ -182,8 +175,6 @@ def _build_application_summary(
         "resources_errored": len(errors),
         "resource_type_breakdown": type_counts,
         "analyzed_type_breakdown": analyzed_types,
-        "application_resilience_score": avg_score,
-        "lowest_resource_score": min_score,
         "total_gaps": len(all_gaps),
         "critical_gaps": critical_gaps,
         "warning_gaps": warning_gaps,
@@ -255,7 +246,7 @@ async def audit_by_block_code(
 
     # 5. Build application-level summary
     app_summary = _build_application_summary(block_code, stack_reports, list(resource_audits))
-    logger.info(f"audit_by_block_code: application score {app_summary.get('application_resilience_score', '?')}/10, {app_summary.get('total_gaps', 0)} total gaps")
+    logger.info(f"audit_by_block_code: {app_summary.get('total_gaps', 0)} total gaps")
 
     return {
         "application_summary": app_summary,
@@ -312,7 +303,7 @@ async def audit_by_stack(
     }]
 
     app_summary = _build_application_summary(label, stack_reports, list(resource_audits))
-    logger.info(f"audit_by_stack: score {app_summary.get('application_resilience_score', '?')}/10, {app_summary.get('total_gaps', 0)} gaps")
+    logger.info(f"audit_by_stack: {app_summary.get('total_gaps', 0)} gaps")
 
     return {
         "application_summary": app_summary,

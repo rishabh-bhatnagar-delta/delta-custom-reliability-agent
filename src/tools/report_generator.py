@@ -31,7 +31,7 @@ def _build_condensed_summary(audit_data: dict) -> dict:
     """Build a condensed version of audit data for Bedrock (avoids token limits)."""
     summary = audit_data.get("application_summary", {})
 
-    # Condense resource audits to just scores and gap names
+    # Condense resource audits to just gap names
     condensed_resources = []
     for r in audit_data.get("resource_audits", []):
         report = r.get("resilience_report", {}).get("report", {})
@@ -39,7 +39,6 @@ def _build_condensed_summary(audit_data: dict) -> dict:
             "resource": r.get("physical_id"),
             "type": r.get("resource_type"),
             "stack": r.get("stack_name"),
-            "score": report.get("overall_resilience_score"),
             "gaps": [g.get("name") for g in report.get("resilience_gaps", [])],
         })
 
@@ -49,8 +48,6 @@ def _build_condensed_summary(audit_data: dict) -> dict:
         "total_resources": summary.get("total_resources"),
         "resources_analyzed": summary.get("resources_analyzed"),
         "resources_unsupported": summary.get("resources_unsupported"),
-        "application_score": summary.get("application_resilience_score"),
-        "lowest_score": summary.get("lowest_resource_score"),
         "total_gaps": summary.get("total_gaps"),
         "critical_gaps": summary.get("critical_gaps", []),
         "resources": condensed_resources,
@@ -145,7 +142,7 @@ def _build_structured_report(audit_data: dict) -> str:
     """Deterministic structured report — always complete, no token limits."""
     summary = audit_data.get("application_summary", {})
     resource_audits = audit_data.get("resource_audits", [])
-    logger.info(f"report_generator: building structured report — {len(resource_audits)} resource audit(s), score {summary.get('application_resilience_score', '?')}/10")
+    logger.info(f"report_generator: building structured report — {len(resource_audits)} resource audit(s)")
     lines = [
         f"# Detailed Audit Data: {summary.get('block_code', 'Unknown')}",
         "",
@@ -159,8 +156,6 @@ def _build_structured_report(audit_data: dict) -> str:
         f"| Unsupported | {summary.get('resources_unsupported', 0)} |",
         f"| Skipped | {summary.get('resources_skipped', 0)} |",
         f"| Errors | {summary.get('resources_errored', 0)} |",
-        f"| **Application Score** | **{summary.get('application_resilience_score', 0)}/10** |",
-        f"| Lowest Resource Score | {summary.get('lowest_resource_score', 0)}/10 |",
         f"| Total Gaps | {summary.get('total_gaps', 0)} |",
         "",
     ]
@@ -331,7 +326,6 @@ def _build_structured_report(audit_data: dict) -> str:
         lines.append(f"### {r.get('physical_id', 'Unknown')} ({r.get('resource_type', '')})")
         lines.append("")
         lines.append(f"**Stack:** {r.get('stack_name', '')}  ")
-        lines.append(f"**Score:** {report.get('overall_resilience_score', '?')}/10  ")
         lines.append(f"**Summary:** {report.get('summary', '')}")
         lines.append("")
 

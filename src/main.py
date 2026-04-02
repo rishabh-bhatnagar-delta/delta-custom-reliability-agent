@@ -178,7 +178,7 @@ async def list_tools() -> list[types.Tool]:
                 "Performs a full resilience audit for all infrastructure owned by a block code. "
                 "Fetches all stacks, gets dimensions for every supported resource, runs posture analysis, "
                 "and returns a detailed report with per-resource evidence, gaps, recommendations, "
-                "and an application-level summary with aggregated scores."
+                "and an application-level summary."
             ),
             inputSchema={
                 "type": "object",
@@ -225,6 +225,29 @@ async def list_tools() -> list[types.Tool]:
                     },
                 },
                 "required": ["stack_name"],
+            },
+        ),
+        types.Tool(
+            name="analyze_resource_resilience",
+            description=(
+                "End-to-end resilience analysis for a single resource. "
+                "Fetches configuration dimensions and immediately evaluates "
+                "reliability posture against AWS Well-Architected standards. "
+                "Returns gaps, recommendations, and remediation commands."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "resource_id": {
+                        "type": "string",
+                        "description": "The physical resource ID or ARN.",
+                    },
+                    "resource_type": {
+                        "type": "string",
+                        "description": "AWS resource type (e.g. AWS::RDS::DBInstance, AWS::S3::Bucket).",
+                    },
+                },
+                "required": ["resource_id", "resource_type"],
             },
         ),
     ]
@@ -460,6 +483,42 @@ async def _handle_generate_audit_report_by_stack(arguments: dict) -> list[types.
     return _text(markdown)
 
 
+async def _handle_analyze_resource_resilience(arguments: dict) -> list[types.TextContent]:
+    resource_id = arguments.get("resource_id")
+    resource_type = arguments.get("resource_type")
+    if not resource_id:
+        raise MissingToolParam("Missing resource_id")
+    if not resource_type:
+        raise MissingToolParam("Missing resource_type")
+
+    logger.info(f"analyze_resource_resilience: '{resource_id}' ({resource_type})")
+
+    # Step 1: Fetch dimensions
+    dimensions = await get_resource_dimensions(aws, resource_id, resource_type)
+    dims_list = [d.model_dump() for d in dimensions]
+    logger.info(f"analyze_resource_resilience: fetched {len(dims_list)} dimension(s)")
+
+    # Step 2: Find the matching analyzer
+    analyzers = {
+        "ApiGateway::RestApi": lambda name, dims: get_apigw_resilience_report(dims),
+        "RDS::DBInstance": lambda name, dims: get_rds_resilience_report(name, dims),
+        "RDS::DBCluster": lambda name, dims: get_rds_resilience_report(name, dims),
+        "Lambda::Function": lambda name, dims: get_lambda_resilience_report(name, dims),
+        "S3::Bucket": lambda name, dims: get_s3_resilience_report(name, dims),
+        "DynamoDB::Table": lambda name, dims: get_dynamodb_resilience_report(dims),
+        "Route53::HostedZone": lambda name, dims: get_route53_resilience_report(name, dims),
+        "EC2::Instance": lambda name, dims: get_ec2_resilience_report(name, dims),
+    }
+
+    for key, analyzer in analyzers.items():
+        if key in resource_type:
+            result = analyzer(resource_id, dims_list)
+            logger.info(f"analyze_resource_resilience: completed for '{resource_id}'")
+            return _text(_serialize(result))
+
+    raise ValueError(f"Unsupported resource type for resilience analysis: {resource_type}")
+
+
 # --- Tool Router ---
 
 _TOOL_HANDLERS = {
@@ -471,6 +530,7 @@ _TOOL_HANDLERS = {
     "audit_by_block_code": _handle_audit_by_block_code,
     "generate_audit_report": _handle_generate_audit_report,
     "generate_audit_report_by_stack": _handle_generate_audit_report_by_stack,
+    "analyze_resource_resilience": _handle_analyze_resource_resilience,
 }
 
 

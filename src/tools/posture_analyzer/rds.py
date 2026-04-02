@@ -53,28 +53,22 @@ def _classify_failover_config(a: ResilienceAnalyzer):
         )
         if has_write_forwarding:
             a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                       f"Global Database with {secondary_count} secondary region(s) and GlobalWriteForwardingStatus=enabled. Writes can be forwarded from secondary to primary, enabling active-active pattern.",
-                       penalty=0)
+                       f"Global Database with {secondary_count} secondary region(s) and GlobalWriteForwardingStatus=enabled. Writes can be forwarded from secondary to primary, enabling active-active pattern.")
         else:
             a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                       f"Global Database with {secondary_count} secondary region(s) but GlobalWriteForwardingStatus=disabled. Secondary is read-only; writes only go to primary region. Cross-region failover requires promotion.",
-                       penalty=0)
+                       f"Global Database with {secondary_count} secondary region(s) but GlobalWriteForwardingStatus=disabled. Secondary is read-only; writes only go to primary region. Cross-region failover requires promotion.")
     elif cluster_id and cluster_readers >= 2 and multi_az:
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   f"Aurora cluster '{cluster_id}' has {cluster_readers} readers and Multi-AZ=true. Multiple readers actively serve traffic across AZs.",
-                   penalty=0)
+                   f"Aurora cluster '{cluster_id}' has {cluster_readers} readers and Multi-AZ=true. Multiple readers actively serve traffic across AZs.")
     elif multi_az:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"Multi-AZ=true but {'cluster has only ' + str(cluster_readers) + ' reader(s)' if cluster_id else 'standalone instance'}. Synchronous standby in another AZ with automatic failover; standby does not serve traffic.",
-                   penalty=0)
+                   f"Multi-AZ=true but {'cluster has only ' + str(cluster_readers) + ' reader(s)' if cluster_id else 'standalone instance'}. Synchronous standby in another AZ with automatic failover; standby does not serve traffic.")
     elif read_replicas:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"Multi-AZ=false but {len(read_replicas)} read replica(s) exist. Replicas serve reads but writer failover requires manual promotion.",
-                   penalty=0)
+                   f"Multi-AZ=false but {len(read_replicas)} read replica(s) exist. Replicas serve reads but writer failover requires manual promotion.")
     else:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   f"Multi-AZ=false, no read replicas, no Global Database. Single point of failure.",
-                   penalty=0)
+                   f"Multi-AZ=false, no read replicas, no Global Database. Single point of failure.")
 
 
 def _analyze_instance(a: ResilienceAnalyzer, db_id: str):
@@ -82,7 +76,7 @@ def _analyze_instance(a: ResilienceAnalyzer, db_id: str):
     if not a.dim("MultiAZ", False):
         a.add_gap("Multi-AZ Deployment", "DISABLED",
                    "Single-AZ deployment; AZ failure causes downtime.",
-                   penalty=2, recommendation="Enable Multi-AZ for automatic failover.",
+                   recommendation="Enable Multi-AZ for automatic failover.",
                    cli=f"aws rds modify-db-instance --db-instance-identifier {db_id} --multi-az --apply-immediately")
 
     # Backup Retention
@@ -90,31 +84,31 @@ def _analyze_instance(a: ResilienceAnalyzer, db_id: str):
     if retention == 0:
         a.add_gap("Automated Backups", "DISABLED",
                    "No automated backups; data loss risk on failure.",
-                   penalty=2, recommendation="Enable automated backups with adequate retention period.",
+                   recommendation="Enable automated backups with adequate retention period.",
                    cli=f"aws rds modify-db-instance --db-instance-identifier {db_id} --backup-retention-period 7 --apply-immediately")
     elif retention < 7:
         a.add_gap("Backup Retention Period", f"{retention} days",
                    "Short retention window; limits recovery options for older data.",
-                   penalty=1, recommendation="Increase backup retention to at least 7 days.")
+                   recommendation="Increase backup retention to at least 7 days.")
 
     # Point-in-Time Recovery
     if not a.dim("PointInTimeRecovery", False):
         a.add_gap("Point-in-Time Recovery", "DISABLED",
                    "Cannot restore to a specific second; limits recovery from corruption.",
-                   penalty=2, recommendation="Enable PITR by setting backup retention period > 0.")
+                   recommendation="Enable PITR by setting backup retention period > 0.")
 
     # Deletion Protection
     if not a.dim("DeletionProtection", False):
         a.add_gap("Deletion Protection", "DISABLED",
                    "Instance can be accidentally deleted.",
-                   penalty=1, recommendation="Enable deletion protection.",
+                   recommendation="Enable deletion protection.",
                    cli=f"aws rds modify-db-instance --db-instance-identifier {db_id} --deletion-protection --apply-immediately")
 
     # Read Replicas
     if not a.dim("ReadReplicaIDs", []):
         a.add_gap("Read Replicas", "NONE",
                    "No read replicas; no read scaling or cross-region disaster recovery.",
-                   penalty=1, recommendation="Create read replicas for read scaling and cross-region DR.",
+                   recommendation="Create read replicas for read scaling and cross-region DR.",
                    cli=f"aws rds create-db-instance-read-replica --db-instance-identifier {db_id}-replica --source-db-instance-identifier {db_id}")
 
     # Minor Version Upgrade
@@ -146,7 +140,7 @@ def _analyze_cluster(a: ResilienceAnalyzer):
     else:
         a.add_gap("Multi-AZ Cluster Readers", "NO READERS",
                    "Writer-only cluster; no read scaling or read failover.",
-                   penalty=1, recommendation="Add reader instances to the cluster.")
+                   recommendation="Add reader instances to the cluster.")
 
 
 def _analyze_global_db(a: ResilienceAnalyzer):

@@ -12,8 +12,6 @@ class ResilienceGap(BaseModel):
 class ResiliencyReport(BaseModel):
     resource_name: str
     resilience_gaps: List[ResilienceGap]
-    overall_resilience_score: int
-    max_resilience_score: int = 10
     summary: str
 
 

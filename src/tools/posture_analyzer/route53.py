@@ -12,14 +12,14 @@ def get_route53_resilience_report(zone_id: str, dimensions: List[Dict[str, Any]]
     if not a.dim("DNSSEC", False):
         a.add_gap("DNSSEC", "DISABLED",
                    "DNS responses are not cryptographically signed; vulnerable to spoofing.",
-                   penalty=1, recommendation="Enable DNSSEC signing for the hosted zone.",
+                   recommendation="Enable DNSSEC signing for the hosted zone.",
                    cli=f"aws route53 enable-hosted-zone-dnssec --hosted-zone-id {zone_id}")
 
     # Query Logging
     if not a.dim("QueryLogging", False):
         a.add_gap("Query Logging", "NOT CONFIGURED",
                    "No visibility into DNS query patterns; harder to diagnose issues.",
-                   penalty=1, recommendation="Enable query logging to CloudWatch Logs for DNS observability.")
+                   recommendation="Enable query logging to CloudWatch Logs for DNS observability.")
 
     # Routing analysis per record group
     routing_analysis = a.dim("RoutingAnalysis", [])
@@ -72,12 +72,11 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
         rs = records[0] if records else {}
         if rs.get("AliasTarget"):
             a.add_gap(f"Failover Configuration: {label}", "NO FAILOVER (ALIAS)",
-                       "Single alias record; HA depends on the target resource configuration.",
-                       penalty=0)
+                       "Single alias record; HA depends on the target resource configuration.")
         else:
             a.add_gap(f"Failover Configuration: {label}", "NO FAILOVER",
                        "Single record with no routing policy; no failover capability.",
-                       penalty=0, recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
+                       recommendation=f"Record '{name}' has no failover. Consider adding failover or weighted routing.")
         return
 
     # --- Emit HA classification ---
@@ -96,7 +95,7 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
             reason = f"Weighted routing with weights={weights}. Only one record has non-zero weight; manual failover required."
         else:
             reason = "Routing policy indicates active-passive pattern."
-        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-PASSIVE", reason, penalty=0)
+        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-PASSIVE", reason)
     else:
         if has_latency:
             regions = [r.get("Region") for r in records if r.get("Region")]
@@ -110,7 +109,7 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
             reason = f"Multivalue answer routing with {len(records)} records. Multiple IPs returned to clients."
         else:
             reason = "Multiple records distribute traffic across endpoints."
-        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-ACTIVE", reason, penalty=0)
+        a.add_gap(f"Failover Configuration: {label}", "ACTIVE-ACTIVE", reason)
 
     # --- Policy-specific gap checks ---
 
@@ -119,7 +118,7 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
         if primary and not primary[0].get("HealthCheckId"):
             a.add_gap(f"Failover: {name}", "PRIMARY HAS NO HEALTH CHECK",
                        "SECONDARY will never activate; failover is non-functional.",
-                       penalty=2, recommendation=f"Attach a health check to the PRIMARY record for '{name}'. Without it, the SECONDARY record will never be used.")
+                       recommendation=f"Attach a health check to the PRIMARY record for '{name}'. Without it, the SECONDARY record will never be used.")
         for r in records:
             if not r.get("HealthCheckId"):
                 a.add_gap(f"Failover Record: {name} ({r.get('Failover', 'UNKNOWN')})", "NO HEALTH CHECK",
@@ -135,35 +134,35 @@ def _analyze_record_group(a: ResilienceAnalyzer, group: dict):
         if len(non_zero) > 1 and any(not r.get("HealthCheckId") for r in records):
             a.add_gap(f"Weighted AA: {name}", "MISSING HEALTH CHECKS",
                        "Active-Active weighted records without health checks will route traffic to unhealthy endpoints.",
-                       penalty=1, recommendation=f"Attach health checks to all weighted records for '{name}' to enable automatic unhealthy-endpoint removal.")
+                       recommendation=f"Attach health checks to all weighted records for '{name}' to enable automatic unhealthy-endpoint removal.")
 
     elif has_latency:
         regions = [r.get("Region") for r in records if r.get("Region")]
         if len(set(regions)) < 2:
             a.add_gap(f"Latency: {name}", "SINGLE REGION",
                        "Latency-based routing with only one region provides no cross-region failover.",
-                       penalty=1, recommendation=f"Add records in additional regions for '{name}' to enable cross-region latency-based routing.")
+                       recommendation=f"Add records in additional regions for '{name}' to enable cross-region latency-based routing.")
         if any(not r.get("HealthCheckId") for r in records):
             a.add_gap(f"Latency: {name}", "MISSING HEALTH CHECKS",
                        "Latency-based records without health checks will route to unhealthy regional endpoints.",
-                       penalty=1, recommendation=f"Attach health checks to all latency-based records for '{name}'.")
+                       recommendation=f"Attach health checks to all latency-based records for '{name}'.")
 
     elif has_geo:
         has_default = any(r.get("GeoLocation", {}).get("CountryCode") == "*" for r in records)
         if not has_default:
             a.add_gap(f"Geolocation: {name}", "NO DEFAULT RECORD",
                        "Queries from unmapped locations will get NXDOMAIN (no answer).",
-                       penalty=2, recommendation=f"Add a default geolocation record (CountryCode='*') for '{name}' to handle queries from unmapped locations.")
+                       recommendation=f"Add a default geolocation record (CountryCode='*') for '{name}' to handle queries from unmapped locations.")
         if any(not r.get("HealthCheckId") for r in records):
             a.add_gap(f"Geolocation: {name}", "MISSING HEALTH CHECKS",
                        "Geolocation records without health checks will route to unhealthy endpoints in that region.",
-                       penalty=1, recommendation=f"Attach health checks to all geolocation records for '{name}'.")
+                       recommendation=f"Attach health checks to all geolocation records for '{name}'.")
 
     elif has_multivalue:
         if any(not r.get("HealthCheckId") for r in records):
             a.add_gap(f"Multivalue: {name}", "UNHEALTHY-BLIND",
                        "Multivalue records without health checks serve traffic to unhealthy endpoints.",
-                       penalty=1, recommendation=f"Attach health checks to all multivalue records for '{name}'.")
+                       recommendation=f"Attach health checks to all multivalue records for '{name}'.")
 
 
 def _analyze_health_checks(a: ResilienceAnalyzer):
@@ -172,10 +171,10 @@ def _analyze_health_checks(a: ResilienceAnalyzer):
     if disabled_hcs:
         a.add_gap("Disabled Health Checks", f"{len(disabled_hcs)} DISABLED",
                    "Disabled health checks provide no failure detection.",
-                   penalty=1, recommendation="Re-enable or remove disabled health checks.")
+                   recommendation="Re-enable or remove disabled health checks.")
 
     total_records = a.dim("TotalUserRecords", 0) or 0
     if total_records > 0 and (a.dim("RecordsWithHealthChecks", 0) or 0) == 0:
         a.add_gap("Health Check Coverage", "NONE",
                    "No records have health checks; Route 53 cannot detect endpoint failures.",
-                   penalty=1, recommendation="Attach health checks to critical records for automated failure detection.")
+                   recommendation="Attach health checks to critical records for automated failure detection.")

@@ -48,8 +48,7 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
     """
     if not asg_detail:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   "No ASG found (AutoScalingGroup=None). Standalone instance with no redundancy or automatic recovery.",
-                   penalty=0)
+                   "No ASG found (AutoScalingGroup=None). Standalone instance with no redundancy or automatic recovery.")
         return
 
     desired = asg_detail.get("DesiredCapacity", 0)
@@ -61,28 +60,22 @@ def _classify_failover_config(a: ResilienceAnalyzer, asg_detail: dict):
 
     if desired == 0 and min_size == 0:
         a.add_gap("Failover Configuration", "NO FAILOVER",
-                   f"ASG '{asg_detail.get('Name', '?')}' has DesiredCapacity=0, MinSize=0. Nothing is running or standing by.",
-                   penalty=0)
+                   f"ASG '{asg_detail.get('Name', '?')}' has DesiredCapacity=0, MinSize=0. Nothing is running or standing by.")
     elif desired == 1:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"ASG DesiredCapacity=1, AZs={azs}. Single instance running; ASG replaces on failure but with downtime.",
-                   penalty=0)
+                   f"ASG DesiredCapacity=1, AZs={azs}. Single instance running; ASG replaces on failure but with downtime.")
     elif len(azs) <= 1:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"ASG DesiredCapacity={desired} but only 1 AZ ({azs}). AZ failure causes full outage.",
-                   penalty=0)
+                   f"ASG DesiredCapacity={desired} but only 1 AZ ({azs}). AZ failure causes full outage.")
     elif not tg_arns:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"ASG DesiredCapacity={desired}, AZs={azs} (multi-AZ) but TargetGroupARNs is empty. No load balancer distributes traffic.",
-                   penalty=0)
+                   f"ASG DesiredCapacity={desired}, AZs={azs} (multi-AZ) but TargetGroupARNs is empty. No load balancer distributes traffic.")
     elif healthy_targets < 2:
         a.add_gap("Failover Configuration", "ACTIVE-PASSIVE",
-                   f"ASG DesiredCapacity={desired}, multi-AZ, has TG but only {healthy_targets} healthy target(s). Not truly Active-Active.",
-                   penalty=0)
+                   f"ASG DesiredCapacity={desired}, multi-AZ, has TG but only {healthy_targets} healthy target(s). Not truly Active-Active.")
     else:
         a.add_gap("Failover Configuration", "ACTIVE-ACTIVE",
-                   f"ASG DesiredCapacity={desired}, AZs={azs}, {healthy_targets} healthy targets behind load balancer. Traffic distributed across multiple healthy instances in multiple AZs.",
-                   penalty=0)
+                   f"ASG DesiredCapacity={desired}, AZs={azs}, {healthy_targets} healthy targets behind load balancer. Traffic distributed across multiple healthy instances in multiple AZs.")
 
 
 def _analyze_placement(a: ResilienceAnalyzer, asg_detail: dict):
@@ -92,15 +85,15 @@ def _analyze_placement(a: ResilienceAnalyzer, asg_detail: dict):
             if not asg_detail.get("TargetGroupARNs"):
                 a.add_gap("Placement", "MULTI-AZ WITHOUT LOAD BALANCER",
                            "Instances span AZs but are not behind a load balancer; they are not working together.",
-                           penalty=1, recommendation="Attach the ASG to a target group/load balancer so multi-AZ instances can share traffic.")
+                           recommendation="Attach the ASG to a target group/load balancer so multi-AZ instances can share traffic.")
         else:
             a.add_gap("Placement", "AZ-SPOF",
                        "All instances in a single AZ; AZ failure causes full outage.",
-                       penalty=2, recommendation="Configure the ASG to span multiple Availability Zones.")
+                       recommendation="Configure the ASG to span multiple Availability Zones.")
     else:
         a.add_gap("Placement", "AZ-SPOF",
                    "Standalone instance in a single AZ; no redundancy.",
-                   penalty=2, recommendation="Place the instance behind an Auto Scaling Group spanning multiple AZs.")
+                   recommendation="Place the instance behind an Auto Scaling Group spanning multiple AZs.")
 
 
 def _analyze_management(a: ResilienceAnalyzer, asg_name: str, asg_detail: dict):
@@ -108,11 +101,11 @@ def _analyze_management(a: ResilienceAnalyzer, asg_name: str, asg_detail: dict):
         if asg_detail.get("MinSize", 0) == 0 and asg_detail.get("DesiredCapacity", 0) == 0:
             a.add_gap("Management", "INACTIVE",
                        "ASG exists but MinSize and DesiredCapacity are 0; no instances running. No active or standby capacity.",
-                       penalty=2, recommendation="Set DesiredCapacity >= 1 to activate the ASG, or remove it if unused.")
+                       recommendation="Set DesiredCapacity >= 1 to activate the ASG, or remove it if unused.")
     else:
         a.add_gap("Management", "MANUAL/BRITTLE",
                    "No Auto Scaling Group; failed instances are not automatically replaced.",
-                   penalty=2, recommendation="Create an Auto Scaling Group to enable automatic instance replacement.")
+                   recommendation="Create an Auto Scaling Group to enable automatic instance replacement.")
 
 
 def _analyze_capacity(a: ResilienceAnalyzer, asg_name: str, asg_detail: dict):
@@ -122,7 +115,7 @@ def _analyze_capacity(a: ResilienceAnalyzer, asg_name: str, asg_detail: dict):
     if desired == 1:
         a.add_gap("Capacity", "ACTIVE-PASSIVE",
                    "DesiredCapacity is 1; ASG will restart a failed instance but there is downtime during replacement.",
-                   penalty=1, recommendation="Increase DesiredCapacity to at least 2 for Active-Active with zero-downtime failover.",
+                   recommendation="Increase DesiredCapacity to at least 2 for Active-Active with zero-downtime failover.",
                    cli=f"aws autoscaling update-auto-scaling-group --auto-scaling-group-name {asg_name} --desired-capacity 2 --min-size 2")
 
 
@@ -135,11 +128,11 @@ def _analyze_traffic(a: ResilienceAnalyzer, asg_detail: dict):
             if healthy < 2:
                 a.add_gap("Traffic", f"{healthy} HEALTHY TARGET(S)",
                            "Fewer than 2 healthy targets in the target group; not truly Active-Active.",
-                           penalty=1, recommendation="Ensure at least 2 healthy instances are InService in the target group for Active-Active.")
+                           recommendation="Ensure at least 2 healthy instances are InService in the target group for Active-Active.")
         else:
             a.add_gap("Traffic", "NO TARGET GROUP",
                        "ASG is not attached to a target group; no load-balanced traffic distribution.",
-                       penalty=1, recommendation="Attach the ASG to an ALB/NLB target group for traffic distribution.")
+                       recommendation="Attach the ASG to an ALB/NLB target group for traffic distribution.")
     else:
         if not a.dim("DirectTargetGroups", []):
             a.add_gap("Traffic", "STANDALONE",
@@ -162,4 +155,4 @@ def _analyze_security_and_backup(a: ResilienceAnalyzer, instance_id: str):
     if not a.dim("HasBackup", False):
         a.add_gap("Backup", "NO BACKUP",
                    "No AWS Backup recovery points; instance data cannot be restored.",
-                   penalty=1, recommendation="Configure AWS Backup for the instance.")
+                   recommendation="Configure AWS Backup for the instance.")
