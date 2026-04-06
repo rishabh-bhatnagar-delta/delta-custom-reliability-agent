@@ -7,6 +7,7 @@ load_dotenv()
 # AWS
 AWS_REGION = os.environ["AWS_REGION"]
 AWS_PROFILE = os.environ["AWS_PROFILE"]
+ASSUME_ROLE_NAME = os.environ.get("ASSUME_ROLE_NAME", "AreReadOnly")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 # Cache TTL in minutes

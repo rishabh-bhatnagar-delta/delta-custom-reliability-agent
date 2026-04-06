@@ -60,7 +60,7 @@ async def _audit_single_resource(
     """Fetch dimensions and run posture analysis for one resource."""
     # Use region-specific provider if region differs
     if region and region != aws.region:
-        aws = AWSClientProvider(region=region)
+        aws = AWSClientProvider(region=region, account_id=aws.account_id)
 
     result = {
         "stack_name": stack_name,
@@ -197,7 +197,7 @@ async def audit_by_block_code(
     logger.info(f"audit_by_block_code: starting for '{block_code}' across {scan_regions}")
 
     # 1. Fetch stacks across all regions
-    stacks_list = await fetch_stacks_multi_region(scan_regions)
+    stacks_list = await fetch_stacks_multi_region(scan_regions, account_id=aws.account_id)
     matching = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
 
     if not matching:
@@ -211,7 +211,7 @@ async def audit_by_block_code(
 
     async def _fetch(stack):
         async with semaphore:
-            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            provider = AWSClientProvider(region=stack.region, account_id=aws.account_id) if stack.region else aws
             resources = await fetch_resources_in_stack(provider, stack.stack_name)
             return stack, resources
 
@@ -271,7 +271,7 @@ async def audit_by_stack(
     logger.info(f"audit_by_stack: starting for '{stack_name}' across {scan_regions}")
 
     # 1. Find the stack across all regions
-    stacks_list = await fetch_stacks_multi_region(scan_regions)
+    stacks_list = await fetch_stacks_multi_region(scan_regions, account_id=aws.account_id)
     stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
 
     if not stack_meta:
@@ -282,7 +282,7 @@ async def audit_by_stack(
     region = stack_meta.region
 
     # 2. Fetch resources
-    provider = AWSClientProvider(region=region) if region else aws
+    provider = AWSClientProvider(region=region, account_id=aws.account_id) if region else aws
     resources = await fetch_resources_in_stack(provider, stack_name)
     logger.info(f"audit_by_stack: '{stack_name}' ({region}) -> {len(resources)} resource(s)")
 

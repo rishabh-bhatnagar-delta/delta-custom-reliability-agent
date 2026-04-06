@@ -153,10 +153,10 @@ async def fetch_and_print_stack(aws_provider: AWSClientProvider, stack: StackSum
     print(json.dumps(stack_obj.model_dump(), indent=2))
 
 
-async def fetch_stacks_multi_region(regions: List[str], force_refresh: bool = False) -> List[StackSummary]:
+async def fetch_stacks_multi_region(regions: List[str], force_refresh: bool = False, account_id: str = None) -> List[StackSummary]:
     """Fetch stacks across multiple regions concurrently."""
     async def _fetch_region(region: str):
-        provider = AWSClientProvider(region=region)
+        provider = AWSClientProvider(region=region, account_id=account_id)
         try:
             stacks = await fetch_only_stacks(provider, force_refresh=force_refresh)
             logger.info(f"fetch_stacks_multi_region: {region} -> {len(stacks)} stack(s)")

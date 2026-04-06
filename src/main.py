@@ -29,7 +29,14 @@ for _noisy in ("botocore", "urllib3", "boto3", "s3transfer"):
 logger = logging.getLogger(__name__)
 
 app = Server("aws-reliability-auditor")
-aws = AWSClientProvider()
+
+
+# --- Helpers ---
+
+def _get_aws(arguments: dict) -> AWSClientProvider:
+    """Build an AWSClientProvider, optionally assuming into a target account."""
+    account_id = arguments.get("account_id")
+    return AWSClientProvider(account_id=account_id)
 
 
 # --- Helpers ---
@@ -50,6 +57,15 @@ def _error(msg: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=f"Error: {msg}")]
 
 
+_ACCOUNT_ID_PROP = {
+    "account_id": {
+        "type": "string",
+        "description": "Optional target AWS account ID for cross-account access. "
+                       "If provided, assumes a role in that account.",
+    },
+}
+
+
 # --- Tool Definitions ---
 
 @app.list_tools()
@@ -66,6 +82,7 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **_ACCOUNT_ID_PROP,
                     "force_refresh": {
                         "type": "boolean",
                         "description": "Bypass cache and fetch fresh data from AWS. Default: false.",
@@ -73,27 +90,6 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
-        # types.Tool(
-        #     name="get_resource_dimensions",
-        #     description=(
-        #         "Given a resource's physical ID and AWS resource type, returns "
-        #         "configuration dimensions used to evaluate reliability posture."
-        #     ),
-        #     inputSchema={
-        #         "type": "object",
-        #         "properties": {
-        #             "resource_id": {
-        #                 "type": "string",
-        #                 "description": "The physical resource ID or ARN.",
-        #             },
-        #             "resource_type": {
-        #                 "type": "string",
-        #                 "description": "AWS resource type (e.g. AWS::RDS::DBInstance).",
-        #             },
-        #         },
-        #         "required": ["resource_id", "resource_type"],
-        #     },
-        # ),
         types.Tool(
             name=ToolNames.RESOURCE_FETCHER_BY_STACK_NAME,
             description=(
@@ -104,6 +100,7 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **_ACCOUNT_ID_PROP,
                     "stack_name": {
                         "type": "string",
                         "description": "The name of the CloudFormation stack.",
@@ -116,31 +113,6 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["stack_name"],
             },
         ),
-        # types.Tool(
-        #     name="analyze_resilience",
-        #     description=(
-        #         "Evaluates a resource's configuration against AWS Well-Architected "
-        #         "Reliability standards. Supports API Gateway, Lambda, RDS, and S3. "
-        #         "Requires the resource dimensions from get_resource_dimensions as input."
-        #     ),
-        #     inputSchema={
-        #         "type": "object",
-        #         "properties": {
-        #             "dimensions": {
-        #                 "type": "array",
-        #                 "items": {
-        #                     "type": "object",
-        #                     "properties": {
-        #                         "name": {"type": "string"},
-        #                         "value": {},
-        #                     },
-        #                 },
-        #                 "description": "List of dimension name/value pairs from get_resource_dimensions. Must include ResourceName and ResourceType.",
-        #             },
-        #         },
-        #         "required": ["dimensions"],
-        #     },
-        # ),
         types.Tool(
             name=ToolNames.RESOURCE_FETCHER_BY_BLOCK_CODE,
             description=(
@@ -150,6 +122,7 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **_ACCOUNT_ID_PROP,
                     "block_code": {
                         "type": "string",
                         "description": "The block code tag value to filter stacks by (e.g. ITSSREMPSM).",
@@ -173,6 +146,7 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **_ACCOUNT_ID_PROP,
                     "block_code": {
                         "type": "string",
                         "description": "The block code to audit and generate a report for.",
@@ -190,6 +164,7 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **_ACCOUNT_ID_PROP,
                     "stack_name": {
                         "type": "string",
                         "description": "The CloudFormation stack name to audit and generate a report for.",
@@ -205,6 +180,7 @@ async def list_tools() -> list[types.Tool]:
 
 async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
     force_refresh = arguments.get("force_refresh", False)
+    aws = _get_aws(arguments)
     if force_refresh:
         clear_cache()
 
@@ -217,7 +193,7 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
             return _text(json.dumps(cached_result, indent=2))
 
     logger.info(f"resource_fetcher: starting across {US_REGIONS} (force_refresh={force_refresh})")
-    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh, account_id=arguments.get("account_id"))
     total = len(stacks_list)
     logger.info(f"resource_fetcher: found {total} stack(s) across all regions")
 
@@ -226,7 +202,7 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
 
     async def _fetch_with_progress(stack):
         async with semaphore:
-            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            provider = AWSClientProvider(region=stack.region, account_id=arguments.get("account_id")) if stack.region else aws
             resources = await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh)
         completed["count"] += 1
         logger.info(
@@ -255,6 +231,7 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
 async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.TextContent]:
     stack_name = arguments.get("stack_name")
     force_refresh = arguments.get("force_refresh", False)
+    account_id = arguments.get("account_id")
     if not stack_name:
         raise MissingToolParam("Missing stack_name")
 
@@ -267,12 +244,12 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
 
     logger.info(f"resource_fetcher_by_stacks: '{stack_name}' across {US_REGIONS}")
 
-    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh, account_id=account_id)
     stack_meta = next((s for s in stacks_list if s.stack_name == stack_name), None)
     block_code = stack_meta.block_code if stack_meta else None
     region = stack_meta.region if stack_meta else None
 
-    provider = AWSClientProvider(region=region) if region else aws
+    provider = AWSClientProvider(region=region, account_id=account_id) if region else _get_aws(arguments)
     resources = await fetch_resources_in_stack(provider, stack_name, force_refresh=force_refresh)
     logger.info(f"resource_fetcher_by_stacks: '{stack_name}' ({region}) -> {len(resources)} resource(s)")
 
@@ -292,6 +269,7 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
 async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.TextContent]:
     block_code = arguments.get("block_code")
     force_refresh = arguments.get("force_refresh", False)
+    account_id = arguments.get("account_id")
     if not block_code:
         raise MissingToolParam("Missing block_code")
 
@@ -305,7 +283,7 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
 
     logger.info(f"resource_fetcher_by_block_code: '{block_code}' across {US_REGIONS}")
 
-    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh)
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh, account_id=account_id)
     matching_stacks = [s for s in stacks_list if s.block_code and s.block_code.upper() == block_code.upper()]
 
     if not matching_stacks:
@@ -315,7 +293,7 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
 
     async def _fetch(stack):
         async with semaphore:
-            provider = AWSClientProvider(region=stack.region) if stack.region else aws
+            provider = AWSClientProvider(region=stack.region, account_id=account_id) if stack.region else _get_aws(arguments)
             return await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh)
 
     all_resources = await asyncio.gather(*(_fetch(s) for s in matching_stacks))
@@ -342,6 +320,7 @@ async def _handle_generate_audit_report(arguments: dict) -> list[types.TextConte
     if not block_code:
         raise MissingToolParam("Missing block_code")
 
+    aws = _get_aws(arguments)
     logger.info(f"generate_audit_report: starting for '{block_code}'")
     audit_data = await audit_by_block_code(aws, block_code, max_concurrency=MAX_CONCURRENCY)
     markdown = generate_markdown_report(audit_data)
@@ -354,6 +333,7 @@ async def _handle_generate_audit_report_by_stack(arguments: dict) -> list[types.
     if not stack_name:
         raise MissingToolParam("Missing stack_name")
 
+    aws = _get_aws(arguments)
     logger.info(f"generate_audit_report_by_stack: starting for '{stack_name}'")
     audit_data = await audit_by_stack(aws, stack_name, max_concurrency=MAX_CONCURRENCY)
     markdown = generate_markdown_report(audit_data)

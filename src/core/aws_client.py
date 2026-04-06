@@ -1,17 +1,37 @@
+import logging
+
 import boto3
 from botocore.config import Config
 
-from .constants import AWS_REGION, AWS_PROFILE
+from .constants import AWS_REGION, AWS_PROFILE, ASSUME_ROLE_NAME
+
+logger = logging.getLogger(__name__)
 
 
 class AWSClientProvider:
-    def __init__(self, region: str = None):
+    def __init__(self, region: str = None, account_id: str = None):
         self.region = region or AWS_REGION
+        self.account_id = account_id
         self.config = Config(
             region_name=self.region,
             retries={'max_attempts': 10, 'mode': 'standard'}
         )
-        self._session = boto3.Session(profile_name=AWS_PROFILE)
+        self._base_session = boto3.Session(profile_name=AWS_PROFILE)
+
+        if account_id:
+            role_arn = f"arn:aws:iam::{account_id}:role/{ASSUME_ROLE_NAME}"
+            logger.info(f"Assuming role {role_arn} for cross-account access")
+            sts = self._base_session.client("sts", config=self.config)
+            creds = sts.assume_role(RoleArn=role_arn, RoleSessionName="reliability-auditor")["Credentials"]
+            self._session = boto3.Session(
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+                region_name=self.region,
+            )
+        else:
+            self._session = self._base_session
+
         self._client_cache = {}
 
     def get_cft_client(self):
