@@ -87,12 +87,6 @@ The posture analyzer classifies each supported resource's failover configuration
 | Aurora cluster with ≥2 readers and Multi-AZ=true | ACTIVE-ACTIVE |
 | Global DB with secondary region, GlobalWriteForwardingStatus=enabled | ACTIVE-ACTIVE |
 
-### DynamoDB
-
-| Condition | Classification |
-|---|---|
-| GlobalTableRegions is empty (single-region table) | NO FAILOVER |
-| GlobalTableRegions has replicas (multi-region global table) | ACTIVE-ACTIVE |
 
 ### Route53
 
