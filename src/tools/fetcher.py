@@ -18,36 +18,44 @@ _resource_cache: Dict[str, Tuple[List[StackResource], float]] = {}
 _stacks_cache: Dict[str, Tuple[List[StackSummary], float]] = {}
 
 
-def _get_cached_resources(stack_name: str) -> Optional[List[StackResource]]:
+def _cache_key(name: str, account_id: str = None) -> str:
+    """Build an account-specific cache key."""
+    acct = account_id or "default"
+    return f"{name}_{acct}"
+
+
+def _get_cached_resources(stack_name: str, account_id: str = None) -> Optional[List[StackResource]]:
     """Return cached resources if still valid (memory first, then file), else None."""
-    if stack_name in _resource_cache:
-        resources, ts = _resource_cache[stack_name]
+    key = _cache_key(stack_name, account_id)
+    if key in _resource_cache:
+        resources, ts = _resource_cache[key]
         if time.time() - ts < _CACHE_TTL:
             return resources
-        del _resource_cache[stack_name]
+        del _resource_cache[key]
 
     # Fall back to file cache
-    cached = file_cache.get("resources", stack_name)
+    cached = file_cache.get("resources", key)
     if cached is not None:
         resources = [StackResource(**r) for r in cached]
-        _resource_cache[stack_name] = (resources, time.time())
+        _resource_cache[key] = (resources, time.time())
         return resources
     return None
 
 
-def _get_cached_stacks(region: str) -> Optional[List[StackSummary]]:
+def _get_cached_stacks(region: str, account_id: str = None) -> Optional[List[StackSummary]]:
     """Return cached stacks list for a region if still valid (memory first, then file), else None."""
-    if region in _stacks_cache:
-        stacks, ts = _stacks_cache[region]
+    key = _cache_key(region, account_id)
+    if key in _stacks_cache:
+        stacks, ts = _stacks_cache[key]
         if time.time() - ts < _CACHE_TTL:
             return stacks
-        del _stacks_cache[region]
+        del _stacks_cache[key]
 
     # Fall back to file cache
-    cached = file_cache.get("stacks", region)
+    cached = file_cache.get("stacks", key)
     if cached is not None:
         stacks = [StackSummary(**s) for s in cached]
-        _stacks_cache[region] = (stacks, time.time())
+        _stacks_cache[key] = (stacks, time.time())
         return stacks
     return None
 
@@ -60,14 +68,14 @@ def clear_cache():
     logger.info("cache: cleared all cached stacks and resources (memory + file)")
 
 
-async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool = False) -> List[StackSummary]:
+async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool = False, account_id: str = None) -> List[StackSummary]:
     """
     Fetches basic metadata (Name, ID, blockCode tag) for all active stacks in the provider's region.
     """
     region = aws_provider.region
 
     if not force_refresh:
-        cached = _get_cached_stacks(region)
+        cached = _get_cached_stacks(region, account_id)
         if cached is not None:
             logger.info(f"fetch_only_stacks: {region} returning {len(cached)} stack(s) from cache")
             return cached
@@ -95,8 +103,9 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
                     block_code=tags.get('blockCode'),
                     region=region,
                 ))
-        _stacks_cache[region] = (stacks, time.time())
-        file_cache.put("stacks", region, [s.model_dump() for s in stacks])
+        key = _cache_key(region, account_id)
+        _stacks_cache[key] = (stacks, time.time())
+        file_cache.put("stacks", key, [s.model_dump() for s in stacks])
         logger.info(f"fetch_only_stacks: {region} found {len(stacks)} active stack(s), cached")
         return stacks
     except Exception as e:
@@ -104,12 +113,12 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
         raise e
 
 
-async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: str, force_refresh: bool = False) -> List[StackResource]:
+async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: str, force_refresh: bool = False, account_id: str = None) -> List[StackResource]:
     """
     Fetches all resources for a specific CloudFormation stack.
     """
     if not force_refresh:
-        cached = _get_cached_resources(stack_name)
+        cached = _get_cached_resources(stack_name, account_id)
         if cached is not None:
             logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(cached)} resource(s) (cached)")
             return cached
@@ -130,13 +139,15 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     resource_type=res['ResourceType'],
                     status=res['ResourceStatus']
                 ))
-        _resource_cache[stack_name] = (resources, time.time())
-        file_cache.put("resources", stack_name, [r.model_dump() for r in resources])
+        key = _cache_key(stack_name, account_id)
+        _resource_cache[key] = (resources, time.time())
+        file_cache.put("resources", key, [r.model_dump() for r in resources])
         logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(resources)} resource(s), cached")
         return resources
     except Exception as e:
         logger.warning(f"fetch_resources_in_stack: [{aws_provider.region}] failed for '{stack_name}' - {e}", exc_info=True)
         return []
+
 
 
 async def fetch_and_print_stack(aws_provider: AWSClientProvider, stack: StackSummary):
@@ -158,7 +169,7 @@ async def fetch_stacks_multi_region(regions: List[str], force_refresh: bool = Fa
     async def _fetch_region(region: str):
         provider = AWSClientProvider(region=region, account_id=account_id)
         try:
-            stacks = await fetch_only_stacks(provider, force_refresh=force_refresh)
+            stacks = await fetch_only_stacks(provider, force_refresh=force_refresh, account_id=account_id)
             logger.info(f"fetch_stacks_multi_region: {region} -> {len(stacks)} stack(s)")
             return stacks
         except Exception as e:
