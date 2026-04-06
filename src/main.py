@@ -186,16 +186,15 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
 
     # Check file cache for the full grouped result first
     from src.core import file_cache as _fc
-    acct = arguments.get("account_id") or "default"
-    cache_key = f"resource_fetcher_all_{acct}"
+    account_id = arguments.get("account_id")
     if not force_refresh:
-        cached_result = _fc.get("results", cache_key)
+        cached_result = _fc.get("results", "resource_fetcher_all", account_id=account_id)
         if cached_result is not None:
-            logger.info(f"resource_fetcher: returning full result from file cache (account={acct})")
+            logger.info(f"resource_fetcher: returning full result from file cache (account={account_id or 'default'})")
             return _text(json.dumps(cached_result, indent=2))
 
     logger.info(f"resource_fetcher: starting across {US_REGIONS} (force_refresh={force_refresh})")
-    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh, account_id=arguments.get("account_id"))
+    stacks_list = await fetch_stacks_multi_region(US_REGIONS, force_refresh=force_refresh, account_id=account_id)
     total = len(stacks_list)
     logger.info(f"resource_fetcher: found {total} stack(s) across all regions")
 
@@ -204,8 +203,8 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
 
     async def _fetch_with_progress(stack):
         async with semaphore:
-            provider = AWSClientProvider(region=stack.region, account_id=arguments.get("account_id")) if stack.region else aws
-            resources = await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh, account_id=arguments.get("account_id"))
+            provider = AWSClientProvider(region=stack.region, account_id=account_id) if stack.region else aws
+            resources = await fetch_resources_in_stack(provider, stack.stack_name, force_refresh=force_refresh, account_id=account_id)
         completed["count"] += 1
         logger.info(
             f"resource_fetcher: [{completed['count']}/{total}] '{stack.stack_name}' ({stack.region}) -> {len(resources)} resource(s)")
@@ -225,7 +224,7 @@ async def _handle_resource_fetcher(arguments: dict) -> list[types.TextContent]:
         grouped[stack.block_code or "untagged"].append(stack_obj.model_dump())
 
     # Cache the full grouped result to file (account-specific)
-    _fc.put("results", cache_key, dict(grouped))
+    _fc.put("results", "resource_fetcher_all", dict(grouped), account_id=account_id)
 
     return _text(json.dumps(grouped, indent=2))
 
@@ -238,11 +237,10 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
         raise MissingToolParam("Missing stack_name")
 
     from src.core import file_cache as _fc
-    acct = account_id or "default"
     if not force_refresh:
-        cached_result = _fc.get("results", f"stack_{stack_name}_{acct}")
+        cached_result = _fc.get("results", f"stack_{stack_name}", account_id=account_id)
         if cached_result is not None:
-            logger.info(f"resource_fetcher_by_stacks: returning '{stack_name}' from file cache (account={acct})")
+            logger.info(f"resource_fetcher_by_stacks: returning '{stack_name}' from file cache (account={account_id or 'default'})")
             return _text(json.dumps(cached_result, indent=2))
 
     logger.info(f"resource_fetcher_by_stacks: '{stack_name}' across {US_REGIONS}")
@@ -265,7 +263,7 @@ async def _handle_resource_fetcher_by_stacks(arguments: dict) -> list[types.Text
     )
     key = block_code or "untagged"
     result = {key: [stack_obj.model_dump()]}
-    _fc.put("results", f"stack_{stack_name}_{acct}", result)
+    _fc.put("results", f"stack_{stack_name}", result, account_id=account_id)
     return _text(json.dumps(result, indent=2))
 
 
@@ -277,10 +275,8 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
         raise MissingToolParam("Missing block_code")
 
     from src.core import file_cache as _fc
-    acct = account_id or "default"
-    cache_key = f"block_{block_code.upper()}_{acct}"
     if not force_refresh:
-        cached_result = _fc.get("results", cache_key)
+        cached_result = _fc.get("results", f"block_{block_code.upper()}", account_id=account_id)
         if cached_result is not None:
             logger.info(f"resource_fetcher_by_block_code: returning '{block_code}' from file cache")
             return _text(json.dumps(cached_result, indent=2))
@@ -315,7 +311,7 @@ async def _handle_resource_fetcher_by_block_code(arguments: dict) -> list[types.
 
     logger.info(f"resource_fetcher_by_block_code: '{block_code}' -> {len(result)} stack(s)")
     output = {block_code: result}
-    _fc.put("results", cache_key, output)
+    _fc.put("results", f"block_{block_code.upper()}", output, account_id=account_id)
     return _text(json.dumps(output, indent=2))
 
 

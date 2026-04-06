@@ -9,7 +9,6 @@ Works alongside the in-memory cache in fetcher.py:
 Cache files are stored in .cache/ at the project root as JSON with TTL metadata.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -24,17 +23,20 @@ _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 _CACHE_TTL = CACHE_TTL_MINUTES * 60
 
 
-def _cache_path(namespace: str, key: str) -> str:
-    """Generate a file path for a cache entry."""
-    safe_key = hashlib.md5(key.encode()).hexdigest()
-    ns_dir = os.path.join(_CACHE_DIR, namespace)
-    os.makedirs(ns_dir, exist_ok=True)
-    return os.path.join(ns_dir, f"{safe_key}.json")
+def _cache_path(namespace: str, key: str, account_id: str = None) -> str:
+    """Generate a file path for a cache entry, nested under account_id when provided."""
+    safe_key = key.replace("/", "_").replace("\\", "_").replace(":", "_")
+    parts = [_CACHE_DIR, namespace]
+    if account_id:
+        parts.append(account_id)
+    target_dir = os.path.join(*parts)
+    os.makedirs(target_dir, exist_ok=True)
+    return os.path.join(target_dir, f"{safe_key}.json")
 
 
-def get(namespace: str, key: str) -> Optional[Any]:
+def get(namespace: str, key: str, account_id: str = None) -> Optional[Any]:
     """Read from file cache if entry exists and hasn't expired."""
-    path = _cache_path(namespace, key)
+    path = _cache_path(namespace, key, account_id)
     if not os.path.exists(path):
         return None
     try:
@@ -51,9 +53,9 @@ def get(namespace: str, key: str) -> Optional[Any]:
         return None
 
 
-def put(namespace: str, key: str, data: Any) -> None:
+def put(namespace: str, key: str, data: Any, account_id: str = None) -> None:
     """Write data to file cache with current timestamp."""
-    path = _cache_path(namespace, key)
+    path = _cache_path(namespace, key, account_id)
     try:
         entry = {"ts": time.time(), "key": key, "data": data}
         with open(path, "w", encoding="utf-8") as f:

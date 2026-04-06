@@ -18,15 +18,14 @@ _resource_cache: Dict[str, Tuple[List[StackResource], float]] = {}
 _stacks_cache: Dict[str, Tuple[List[StackSummary], float]] = {}
 
 
-def _cache_key(name: str, account_id: str = None) -> str:
-    """Build an account-specific cache key."""
-    acct = account_id or "default"
-    return f"{name}_{acct}"
+def _mem_key(name: str, account_id: str = None) -> str:
+    """Build an account-specific in-memory cache key."""
+    return f"{name}_{account_id or 'default'}"
 
 
 def _get_cached_resources(stack_name: str, account_id: str = None) -> Optional[List[StackResource]]:
     """Return cached resources if still valid (memory first, then file), else None."""
-    key = _cache_key(stack_name, account_id)
+    key = _mem_key(stack_name, account_id)
     if key in _resource_cache:
         resources, ts = _resource_cache[key]
         if time.time() - ts < _CACHE_TTL:
@@ -34,7 +33,7 @@ def _get_cached_resources(stack_name: str, account_id: str = None) -> Optional[L
         del _resource_cache[key]
 
     # Fall back to file cache
-    cached = file_cache.get("resources", key)
+    cached = file_cache.get("resources", stack_name, account_id=account_id)
     if cached is not None:
         resources = [StackResource(**r) for r in cached]
         _resource_cache[key] = (resources, time.time())
@@ -44,7 +43,7 @@ def _get_cached_resources(stack_name: str, account_id: str = None) -> Optional[L
 
 def _get_cached_stacks(region: str, account_id: str = None) -> Optional[List[StackSummary]]:
     """Return cached stacks list for a region if still valid (memory first, then file), else None."""
-    key = _cache_key(region, account_id)
+    key = _mem_key(region, account_id)
     if key in _stacks_cache:
         stacks, ts = _stacks_cache[key]
         if time.time() - ts < _CACHE_TTL:
@@ -52,7 +51,7 @@ def _get_cached_stacks(region: str, account_id: str = None) -> Optional[List[Sta
         del _stacks_cache[key]
 
     # Fall back to file cache
-    cached = file_cache.get("stacks", key)
+    cached = file_cache.get("stacks", region, account_id=account_id)
     if cached is not None:
         stacks = [StackSummary(**s) for s in cached]
         _stacks_cache[key] = (stacks, time.time())
@@ -103,9 +102,9 @@ async def fetch_only_stacks(aws_provider: AWSClientProvider, force_refresh: bool
                     block_code=tags.get('blockCode'),
                     region=region,
                 ))
-        key = _cache_key(region, account_id)
+        key = _mem_key(region, account_id)
         _stacks_cache[key] = (stacks, time.time())
-        file_cache.put("stacks", key, [s.model_dump() for s in stacks])
+        file_cache.put("stacks", region, [s.model_dump() for s in stacks], account_id=account_id)
         logger.info(f"fetch_only_stacks: {region} found {len(stacks)} active stack(s), cached")
         return stacks
     except Exception as e:
@@ -139,9 +138,9 @@ async def fetch_resources_in_stack(aws_provider: AWSClientProvider, stack_name: 
                     resource_type=res['ResourceType'],
                     status=res['ResourceStatus']
                 ))
-        key = _cache_key(stack_name, account_id)
+        key = _mem_key(stack_name, account_id)
         _resource_cache[key] = (resources, time.time())
-        file_cache.put("resources", key, [r.model_dump() for r in resources])
+        file_cache.put("resources", stack_name, [r.model_dump() for r in resources], account_id=account_id)
         logger.info(f"fetch_resources_in_stack: [{aws_provider.region}] '{stack_name}' -> {len(resources)} resource(s), cached")
         return resources
     except Exception as e:
